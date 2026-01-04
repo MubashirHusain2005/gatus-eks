@@ -1,21 +1,14 @@
-# IDE
-*.iml
-.idea
-.vscode
+.sass-cache/
 
-# OS
+# OS / editor
 .DS_Store
+.vscode/
+.idea/
 
-# JS
-node_modules
+# Terraform
+**/.terraform/
+terraform.tfstate
+terraform.tfstate.*
+*.tfvars
+*.tfplan
 
-# Go
-/vendor
-
-# Misc
-*.db
-*.db-shm
-*.db-wal
-gatus
-config/config.yml
-config.yaml

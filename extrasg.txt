@@ -1,0 +1,563 @@
+#Security Group for the nodes
+
+resource "aws_security_group" "eks_nodes" {
+  name        = var.nodes_name
+  description = "Security group for all nodes in the cluster"
+  vpc_id      = aws_vpc.eks-vpc.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+        Name                                            = "node-sg"
+        "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+  }
+}
+
+resource "aws_security_group_rule" "nodes" {
+  description              = "Allow nodes to communicate with each other"
+  from_port                = 0
+  protocol                 = "-1"
+  security_group_id        = aws_security_group.eks_nodes.id
+  source_security_group_id = aws_security_group.eks_nodes.id
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+resource "aws_security_group_rule" "nodes_inbound" {
+  description              = "Allow worker Kubelets and pods to receive communication from the cluster control plane"
+  from_port                = 1025
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.eks_nodes.id
+  source_security_group_id = aws_security_group.eks_cluster.id
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+
+#IAM role for nodes
+resource "aws_iam_role" "nodes" {
+  name = "eks-node-group"
+
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+    Version = "2012-10-17"
+  })
+}
+
+#IAM policies for the nodes
+resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.nodes.name
+}
+
+
+
+
+resource "aws_eks_node_group" "private-nodes" {
+  cluster_name  = aws_eks_cluster.eks_cluster.name
+  node_role_arn = aws_iam_role.nodes.arn
+  node_group_name = "eks-node-group"
+
+  subnet_ids = [
+    aws_subnet.private-subnet-2a.id,
+    aws_subnet.private-subnet-2b.id
+  ]
+
+  capacity_type  = "ON_DEMAND"
+  instance_types = ["t3.large"]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  tags = {
+    Environment = "prod"
+    Project     = "eks-assignment"
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.AmazonEC2ContainerRegistryReadOnly,
+  ]
+
+}
+
+
+FROM golang:1.25.5-alpine3.22 AS build
+
+WORKDIR /app
+
+RUN addgroup -S app && adduser -S app -G app
+
+USER app
+
+COPY --from=builder /app/app /app/app
+
+COPY --from=builder /app/config.yaml ./config.yaml
+
+ENV GATUS_CONFIG_PATH=/app/config.yaml
+
+EXPOSE 8080 
+
+CMD ["/app/app"]
+
+
+
+
+
+
+##Deployment.yml 
+
+resource "kubernetes_manifest" "deployment" {
+  manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+
+    metadata = {
+      name      = "my-app"
+      namespace = "app-space"
+      labels = {
+        app = "my-app"
+      }
+    }
+
+    spec = {
+      replicas = 2
+
+      selector = {
+        matchLabels = {
+          app = "my-app"
+        }
+      }
+
+      template = {
+        metadata = {
+          labels = {
+            app = "my-app"
+          }
+        }
+
+        spec = {
+          containers = [
+            {
+              name  = "gatusapp"
+              image = "038774803581.dkr.ecr.eu-west-2.amazonaws.com/gatusapp:latest"
+
+              ports = [
+                {
+                  containerPort = 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+
+##Service.yml 
+
+resource "kubernetes_manifest" "service" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Service"
+
+    metadata = {
+      name      = "my-app"
+      namespace = "app-space"
+    }
+
+    spec = {
+      selector = {
+        app = "my-app"
+      }
+
+      ports = [
+        {
+          port       = 80
+          targetPort = 8080
+        }
+      ]
+
+      type = "ClusterIP"
+    }
+  }
+}
+
+
+
+
+##Kubernetes + Helm providers + Kubectl
+
+provider "kubernetes" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = aws_eks_cluster.eks_cluster.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+}
+
+provider "kubectl" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+  load_config_file       = false
+}
+
+
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = aws_eks_cluster.eks_cluster.name
+}
+##1 nginx-ingress controller
+
+resource "helm_release" "nginx_ingress" {
+  name             = "ingress-nginx1"
+  namespace        = "app-space"
+  create_namespace = true
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  version          = "4.8.3"
+  atomic           = false
+  lint             = true
+  wait             = true
+
+
+  set = [
+    {
+      name  = "controller.service.type"
+      value = "LoadBalancer"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
+      value = "nlb"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
+      value = "internet-facing"
+    },
+
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-nlb-target-type"
+      value = "instance"
+    },
+    {
+      name  = "controller.hostNetwork"
+      value = "true"
+    },
+    {
+      name  = "controller.service.externalTrafficPolicy"
+      value = "Local"
+    }
+  ]
+  depends_on = [
+   aws_eks_node_group.private-nodes
+  ]
+}
+
+
+##2  Cert manager
+
+resource "helm_release" "cert_manager" {
+  name             = "cert-manager"
+  namespace        = "cert-manager"
+  create_namespace = true
+  repository       = "https://charts.jetstack.io"
+  chart            = "cert-manager"
+  version          = "1.16.2"
+
+  # Helm-level behavior settings (apply to the release, not the chart values)
+  wait   = true
+  atomic = true
+
+  # Chart value overrides
+  set = [
+    {
+      name  = "installCRDs"
+      value = "true"
+    },
+  ]
+
+ depends_on = [
+  aws_eks_node_group.private-nodes
+]
+
+}
+
+
+#3  Cluster_issuer yaml file
+resource "kubectl_manifest" "letsencrypt_staging" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert-staging
+    solvers:
+    - dns01:
+        route53:
+          hostedZoneID: "Z09331692XTWCNAOSXR5T"
+          region: "eu-west-2"
+EOF
+}
+
+resource "kubectl_manifest" "letsencrypt_prod" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server:  https://acme-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert
+    solvers:
+    - dns01:
+        route53:
+          hostedZoneID: "Z09331692XTWCNAOSXR5T"
+          region: "eu-west-2"
+          hostedZoneName: "mubashir.site."
+EOF
+}
+
+resource "kubectl_manifest" "deployment_svc" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-space
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: app-space
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      serviceAccountName: my-service-account
+      containers:
+      - name: gatusapp
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/gatusapp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-gatus-app
+  namespace: app-space
+spec:
+  selector:
+    app: my-app
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+EOF
+}
+
+resource "kubectl_manifest" "ingress" {
+  yaml_body = <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - mubashir.site
+    secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: service-gatus-app
+                port:
+                  number: 80
+EOF
+}
+
+
+##6 External DNS
+
+resource "kubectl_manifest" "external_dns_namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+EOF
+}
+
+
+resource "aws_iam_role" "external_dns" {
+  name = "iam-dns"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:external-dns:external-dns",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+
+resource "aws_iam_role_policy" "external_dns_route53" {
+  name = "external-dns-route53-policy"
+  role = aws_iam_role.external_dns.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListResourceRecordSets"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "kubernetes_service_account_v1" "svc-dns" {
+  metadata {
+    name      = "external-dns"
+    namespace = "external-dns"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
+    }
+  }
+
+  depends_on = [
+    kubectl_manifest.external_dns_namespace
+  ]
+}
+
+
+resource "helm_release" "external_dns" {
+  name             = "external-dns"
+  namespace        = "external-dns"
+  create_namespace = false
+
+  repository = "https://kubernetes-sigs.github.io/external-dns/"
+  chart      = "external-dns"
+  version    = "1.14.0"
+
+  wait   = true
+
+  set = [
+    {
+      name  = "provider"
+      value = "aws"
+    },
+
+    {
+      name  = "aws.region"
+      value = "eu-west-2"
+    },
+
+    {
+      name  = "serviceAccount.create"
+      value = "false"
+    },
+
+    {
+      name  = "serviceAccount.name"
+      value = "external-dns"
+    },
+
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.external_dns.arn
+    }
+  ]
+
+  depends_on = [
+    aws_iam_role.external_dns,
+    aws_iam_role_policy.external_dns_route53
+  ]
+}

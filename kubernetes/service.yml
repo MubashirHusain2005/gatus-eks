@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: app-space
+  name: service-gatus-app
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+spec:
+  type: ClusterIP
+  selector:
+    app: my-app
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+
