@@ -2,6 +2,5 @@
 .github
 .idea
 .git
-web/app
 *.db
 testdata
