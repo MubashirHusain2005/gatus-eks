@@ -1,4 +1,4 @@
-name: Push Docker Image to ECR with Trivy scanning
+name: Push Docker Image to ECR 
 
 on:
   workflow_dispatch:
@@ -42,7 +42,8 @@ jobs:
 
 #Build and push Docker image as 'latest'
 
-    - name: Build  Docker Image 
+    - name: Build Docker Image 
+      env:
       REGISTRY: ${{ steps.login-ecr.outputs.registry }}
       REPOSITORY: ${{ vars.REPOSITORY }}
       run: |
