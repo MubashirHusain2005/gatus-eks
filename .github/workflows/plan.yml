@@ -1,6 +1,5 @@
 name: Intialise Terraform Code and Plan
 
-#Workflow Triggers
 on:
   workflow_dispatch:
     branches:
@@ -11,7 +10,6 @@ env:
   S3_BUCKET: ${{ secrets.S3_BUCKET }}
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_CREDENTIALS: ${{ secrets.AWS_CREDENTIALS }}
-  GITHUB_TOKEN: ${{}}
 
 #Define Jobs
 jobs:
