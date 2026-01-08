@@ -11,17 +11,18 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_CREDENTIALS: ${{ secrets.AWS_CREDENTIALS }}
 
+permissions:
+      id-token: write
+      contents: read 
+
+
 #Define Jobs
 jobs:
   terraform:
     runs-on: ubuntu-latest
 
-    permissions:
-      id-token: write
-      contents: read 
-
+    
     steps:
-
     - name: Checkout repository
       uses: actions/checkout@v4
 
