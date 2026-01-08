@@ -1,7 +1,7 @@
 name: Intialise Terraform Code and Plan
 
 on:
-  workflow_dispatch:
+  push:
     branches:
       - master
 
