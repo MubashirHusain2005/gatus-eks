@@ -86,4 +86,4 @@ jobs:
         IMAGE_TAG: ${{ steps.get-commit-hash.outputs.commit-hash }}-${{ steps.get-timestamp.outputs.timestamp }}
 
       run: |
-        docker push ${{ steps.build-image.outputs.image-ref }}
+         docker push ${{ steps.build-image.outputs.image-ref }}
