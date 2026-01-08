@@ -1,0 +1,73 @@
+name: Push Docker Image to ECR with Trivy scanning
+
+on:
+  workflow_dispatch:
+    branches:
+      - master
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_CREDENTIALS: ${{ secrets.AWS_CREDENTIALS }}
+  REPOSITORY: ${{ vars.REPOSITORY }}
+  IMAGEREF: ${{ secrets.IMAGEREF }}
+
+
+permissions:
+  id-token: write
+  contents: read 
+
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+# Configure AWS credentials using OIDC
+
+    - name: Configure AWS credentials using OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_CREDENTIALS }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+## Login to ECR
+
+    - name: Login to Amazon ECR
+      id: login-ecr 
+      uses: aws-actions/amazon-ecr-login@v1
+
+#Build and push Docker image as 'latest'
+
+    - name: Build  Docker Image 
+      REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      REPOSITORY: ${{ vars.REPOSITORY }}
+      run: |
+        cd app
+        docker build -t $REGISTRY/$REPOSITORY:latest .
+
+#Running Trivy here to spot vulnerabilities with Docker image
+
+    - name: Run Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@0.31.0
+      with:
+        image-ref: ${{ secrets.IMAGEREF }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+# If Trivy passed, push image!!     
+
+    - name: Push Docker Image to Amazon ECR
+      env:
+        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        REPOSITORY: ${{ vars.REPOSITORY }}
+        IMAGEREF: ${{ secrets.IMAGEREF }}
+
+      run: |
+        docker push $REGISTRY/$REPOSITORY:latest

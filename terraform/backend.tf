@@ -8,3 +8,9 @@ terraform {
     use_lockfile = false
   }
 }
+
+
+provider "aws" {
+  region = "eu-west-2"
+}
+
