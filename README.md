@@ -28,8 +28,7 @@ You can also use Docker Hub if you prefer:
 ```console
 docker run -p 8080:8080 --name gatus twinproduction/gatus:stable
 ```
-For more details, see [Usage](#usage)
-</details>
+For more details, see [Usage](#usage</details>
 
 > ❤ Like this project? Please consider [sponsoring me](https://github.com/sponsors/TwiN).
 

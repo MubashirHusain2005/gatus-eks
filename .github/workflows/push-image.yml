@@ -3,7 +3,7 @@ name: Push Docker Image to ECR
 on:
   workflow_dispatch:
     branches:
-      - master
+      - main
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
