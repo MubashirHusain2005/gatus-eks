@@ -18,7 +18,7 @@ core applications: https://status.twin.sh/
 _Looking for a managed solution? Check out [Gatus.io](https://gatus.io)._
 
 <details>
-  <summary><b>Quick start</b></summary>
+  <summary><b>Quick start</b></summary
 
 ```console
 docker run -p 8080:8080 --name gatus ghcr.io/twin/gatus:stable
