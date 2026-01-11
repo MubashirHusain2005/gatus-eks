@@ -6,7 +6,7 @@ on:
     branches:
       - master
       
-##Environment Variables      
+##Environment Variables
 env:
   S3_BUCKET: ${{ secrets.S3_BUCKET }}
   AWS_REGION: ${{ vars.AWS_REGION }}
