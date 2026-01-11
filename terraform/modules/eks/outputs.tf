@@ -11,12 +11,16 @@ output "oidc_provider_arn" {
 }
 
 output "cluster_name" {
-  value = aws_eks_cluster.eks_cluster.name
+  value       = aws_eks_cluster.eks_cluster.name
   description = "EKS Cluster name"
 }
-
 
 output "cluster_ca" {
   description = "Base64 encoded CA certificate for the EKS cluster"
   value       = aws_eks_cluster.eks_cluster.certificate_authority[0].data
 }
+
+
+
+
+

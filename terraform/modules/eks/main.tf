@@ -1,13 +1,17 @@
 terraform {
   required_providers {
-    
+
+    aws = {
+      source = "hashicorp/aws"
+    }
+
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.23.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = ">= 2.11.0"
+      version = ">= 2.12.0"
     }
 
     kubectl = {
@@ -16,7 +20,10 @@ terraform {
     }
   }
 }
+
+
 #EKS AWS authentication
+
 
 data "tls_certificate" "eks" {
   url = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
@@ -54,6 +61,13 @@ resource "aws_eks_cluster" "eks_cluster" {
     endpoint_public_access  = true
   }
 
+  encryption_config {
+    provider {
+      key_arn = var.kms_key_arn
+    }
+    resources = ["secrets"]
+  }
+
   tags = {
     Environment = "labs"
     Project     = "eks-assignment"
@@ -61,7 +75,7 @@ resource "aws_eks_cluster" "eks_cluster" {
 
 
   depends_on = [
-  var.iam_cluster_role_arn
+    var.iam_cluster_role_arn
   ]
 }
 
@@ -73,11 +87,18 @@ resource "aws_eks_addon" "vpc-cni" {
 }
 
 
-
 resource "aws_eks_addon" "kube-proxy" {
   cluster_name                = aws_eks_cluster.eks_cluster.name
   addon_name                  = "kube-proxy"
   resolve_conflicts_on_update = "OVERWRITE"
+
+}
+
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name                = aws_eks_cluster.eks_cluster.name
+  addon_name                  = "metrics-server"
+  resolve_conflicts_on_update = "OVERWRITE"
+
 }
 
 ##EBS CSI Driver 
@@ -121,69 +142,13 @@ resource "aws_eks_addon" "csi-driver" {
   preserve                    = true
   service_account_role_arn    = aws_iam_role.ebs_csi-driver.arn
 
-  depends_on = [ aws_eks_cluster.eks_cluster,
-                aws_iam_openid_connect_provider.eks,
-                aws_eks_node_group.private-nodes
+  depends_on = [aws_eks_cluster.eks_cluster,
+    aws_iam_openid_connect_provider.eks,
+    aws_eks_node_group.private-nodes
 
   ]
 
 }
-
-
-#KMS Encryption
-
-resource "aws_kms_key" "kms_key" {
-  description             = "Encryption KMS key"
-  enable_key_rotation     = true
-  deletion_window_in_days = 20
-}
-
-resource "aws_kms_alias" "kms_alias" {
-  name          = "alias/exampleKey"
-  target_key_id = aws_kms_key.kms_key.id
-}
-
-resource "aws_kms_key_policy" "kms_key_policy" {
-  key_id = aws_kms_key.kms_key.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-
-    Statement = [
-      {
-        Sid    = "EnableRootPermissions"
-        Effect = "Allow"
-
-        Principal = {
-          AWS = "arn:aws:iam::038774803581:root"
-        }
-
-        Action   = "kms:*"
-        Resource = "*"
-      },
-
-      {
-        Sid    = "AllowEKSUseOfKey"
-        Effect = "Allow"
-
-        Principal = {
-          Service = "eks.amazonaws.com"
-        }
-
-        Action = [
-          "kms:Encrypt",
-          "kms:Decrypt",
-          "kms:ReEncrypt*",
-          "kms:GenerateDataKey*",
-          "kms:DescribeKey"
-        ]
-
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 
 
 ##Node Group
@@ -193,7 +158,7 @@ resource "aws_eks_node_group" "private-nodes" {
   node_group_name = "eks-node-group"
 
   subnet_ids = [
-   var.priv_subnet2a_id,
+    var.priv_subnet2a_id,
     var.priv_subnet2b_id
   ]
 
@@ -217,6 +182,6 @@ resource "aws_eks_node_group" "private-nodes" {
 
 
 
-  depends_on = [ var.nodegroup_role_arn ]
+  depends_on = [var.nodegroup_role_arn]
 
 }

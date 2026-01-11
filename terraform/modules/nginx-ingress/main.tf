@@ -1,13 +1,17 @@
 terraform {
   required_providers {
-    
+
+    aws = {
+      source = "hashicorp/aws"
+    }
+
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.23.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = ">= 2.11.0"
+      version = ">= 2.12.0"
     }
 
     kubectl = {
@@ -16,8 +20,6 @@ terraform {
     }
   }
 }
-
-
 
 ## nginx-ingress controller
 
@@ -34,36 +36,36 @@ resource "helm_release" "nginx_ingress" {
   timeout          = 600
 
 
-  set  {
-      name  = "controller.service.type"
-      value = "LoadBalancer"
-    }
-    set {
-      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
-      value = "nlb"
-    }
-    set {
-      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
-      value = "internet-facing"
-    }
+  set {
+    name  = "controller.service.type"
+    value = "LoadBalancer"
+  }
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
+    value = "nlb"
+  }
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
+    value = "internet-facing"
+  }
 
-    set {
-      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-nlb-target-type"
-      value = "instance"
-    }
-    set {
-      name  = "controller.hostNetwork"
-      value = "true"
-    }
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-nlb-target-type"
+    value = "instance"
+  }
+  set {
+    name  = "controller.hostNetwork"
+    value = "true"
+  }
 
-    set {
-      name  = "controller.replicaCount"
-      value = "1"
-    }
-    set {
-      name  = "controller.service.externalTrafficPolicy"
-      value = "Local"
-    }
+  set {
+    name  = "controller.replicaCount"
+    value = "1"
+  }
+  set {
+    name  = "controller.service.externalTrafficPolicy"
+    value = "Local"
+  }
 
   depends_on = [var.cluster_endpoint]
 }

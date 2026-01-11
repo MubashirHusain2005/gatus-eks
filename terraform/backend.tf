@@ -1,16 +1,11 @@
 terraform {
   backend "s3" {
-
-    bucket       = "mubashir-tf-state"
-    key          = "global/s3/terraform.tfstate"
-    region       = "eu-west-2"
-    encrypt      = true
-    use_lockfile = false
+    bucket         = "mhusains3"
+    key            = "eks/terraform.tfstate"
+    region         = "eu-west-2"
+    dynamodb_table = "terraform-lock"
+    encrypt        = true
   }
 }
 
-
-provider "aws" {
-  region = "eu-west-2"
-}
 

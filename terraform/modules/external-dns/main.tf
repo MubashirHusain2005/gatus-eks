@@ -1,15 +1,17 @@
 ##6 External DNS
-
 terraform {
   required_providers {
-    
+    aws = {
+      source = "hashicorp/aws"
+    }
+
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.23.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = ">= 2.11.0"
+      version = ">= 2.12.0"
     }
 
     kubectl = {
@@ -78,7 +80,7 @@ resource "aws_iam_role_policy" "external_dns_route53" {
         Action = [
           "route53:ChangeResourceRecordSets"
         ]
-        Resource = "*"
+        Resource = "arn:aws:route53:::hostedzone/*"
       },
       {
         Effect = "Allow"
@@ -104,28 +106,28 @@ resource "helm_release" "external_dns" {
   timeout = 600
 
   set {
-      name  = "provider"
-      value = "aws"
+    name  = "provider"
+    value = "aws"
   }
 
   set {
-      name  = "aws.region"
-      value = "eu-west-2"
+    name  = "aws.region"
+    value = "eu-west-2"
   }
 
-  set {  
-      name  = "serviceAccount.create"
-      value = "false"
-  }
-  set {  
-      name  = "serviceAccount.name"
-      value = "external-dns"
+  set {
+    name  = "serviceAccount.create"
+    value = "false"
   }
   set {
-      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-      value = aws_iam_role.external_dns.arn
+    name  = "serviceAccount.name"
+    value = "external-dns"
   }
-  
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.external_dns.arn
+  }
+
 
   depends_on = [
     kubectl_manifest.external_dns_namespace,

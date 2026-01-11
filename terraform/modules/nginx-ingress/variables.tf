@@ -1,4 +1,4 @@
 variable "cluster_endpoint" {
-    type = string
+  type = string
 }
 

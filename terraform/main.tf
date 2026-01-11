@@ -1,56 +1,37 @@
-terraform {
-  required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
-    }
-
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.11"
-    }
-
-    kubectl = {
-      source  = "gavinbunney/kubectl"
-      version = ">= 1.7.0"
-    }
-  }
-}
-
-
-data "aws_eks_cluster_auth" "eks" {
+data "aws_eks_cluster_auth" "cluster_auth" {
   name = module.eks.cluster_name
 }
 
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_ca)
-  token                  = data.aws_eks_cluster_auth.eks.token
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_ca)
-    token                  = data.aws_eks_cluster_auth.eks.token
-  }
+  token                  = data.aws_eks_cluster_auth.cluster_auth.token
 }
 
 provider "kubectl" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_ca)
-  token                  = data.aws_eks_cluster_auth.eks.token
+  token                  = data.aws_eks_cluster_auth.cluster_auth.token
   load_config_file       = false
 }
 
+provider "helm" {}
+
+
+module "ecr" {
+  source               = "./modules/ecr"
+  name                 = "go-app"
+  scan_on_push         = true
+  region               = "eu-west-2"
+  image_tag_mutability = "IMMUTABLE"
+}
 
 
 module "vpc" {
-  source = "./modules/vpc"
+  source             = "./modules/vpc"
+  vpc_flow_logs_role = module.iam.vpc_flow_logs_role
 
-  depends_on = [
-    module.iam
-  ]
+  depends_on = [module.iam]
 }
 
 module "iam" {
@@ -60,13 +41,13 @@ module "iam" {
 
 module "eks" {
   source               = "./modules/eks"
-  clus_vers            = "1.30"
+  clus_vers            = var.clus_vers
   vpc_id               = module.vpc.vpc_id
   iam_cluster_role_arn = module.iam.iam_cluster_role_arn
   nodegroup_role_arn   = module.iam.nodegroup_role_arn
   priv_subnet2a_id     = module.vpc.priv_subnet2a_id
   priv_subnet2b_id     = module.vpc.priv_subnet2b_id
-
+  kms_key_arn          = module.vpc.kms_key_arn
 
 
   depends_on = [
@@ -105,6 +86,8 @@ module "manifests" {
   source                   = "./modules/manifests"
   cluster_endpoint         = module.eks.cluster_endpoint
   letsencrypt_staging_name = module.cert-manager.letsencrypt_staging_name
+  ecr_repo_name            = module.ecr.ecr_repo_name
+  ecr_repository_url       = module.ecr.ecr_repository_url
 
   depends_on = [
 
@@ -112,7 +95,6 @@ module "manifests" {
     module.nginx-ingress,
     module.external-dns
   ]
-
 }
 
 
@@ -125,13 +107,10 @@ module "nginx-ingress" {
   ]
 }
 
-
-
-
-
-
-
-
+module "security-group" {
+  source = "./modules/security-group"
+  vpc_id = module.vpc.vpc_id
+}
 
 
 

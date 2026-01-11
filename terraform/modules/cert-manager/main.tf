@@ -1,14 +1,18 @@
 ##2  Cert manager
 terraform {
   required_providers {
-    
+
+    aws = {
+      source = "hashicorp/aws"
+    }
+
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.23.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = ">= 2.11.0"
+      version = ">= 2.12.0"
     }
 
     kubectl = {
@@ -23,17 +27,17 @@ resource "helm_release" "cert_manager" {
   repository = "https://charts.jetstack.io"
   chart      = "cert-manager"
   namespace  = "cert-manager"
-  version    =  "1.16.1"
+  version    = "1.16.1"
 
   create_namespace = true
   wait             = true
   timeout          = 600
 
-  set  {
-      name  = "installCRDs"
-      value = "true"
-    }
-  
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
 
   depends_on = [var.cluster_endpoint]
 }
