@@ -95,3 +95,146 @@ resource "aws_dynamodb_table" "terraform_locks" {
     description = "Terraform State lock for EKS"
   }
 }
+
+
+#OIDC for github actions
+
+data "tls_certificate" "github_actions" {
+  url = "https://token.actions.githubusercontent.com"
+}
+
+
+resource "aws_iam_openid_connect_provider" "oidc" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.github_actions.certificates[0].sha1_fingerprint]
+}
+
+
+resource "aws_iam_role" "github_oidc_role" {
+  name = var.oidc_name
+  lifecycle {
+    prevent_destroy = true
+  }
+  assume_role_policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Principal" : {
+          "Federated" = aws_iam_openid_connect_provider.oidc.arn
+        },
+        "Action" : "sts:AssumeRoleWithWebIdentity",
+        "Condition" : {
+          "StringEquals" : {
+            "token.actions.githubusercontent.com:aud" : "sts.amazonaws.com"
+          },
+          "StringLike" : {
+            "token.actions.githubusercontent.com:sub" : "repo:MubashirHusain2005/gatus-eks:*"
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecr_push" {
+  role       = aws_iam_role.github_oidc_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+
+#IAM Role for ECR
+
+resource "aws_iam_role" "ecr_role" {
+  name = "ecr"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Federated = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+
+resource "aws_iam_policy" "ecr_policy" {
+  name = "ecr-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:CompleteLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:InitiateLayerUpload",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:BatchGetImage",
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecr_policy" {
+  policy_arn = aws_iam_policy.ecr_policy.arn
+  role       = aws_iam_role.ecr_role.id
+}
+
+
+#ECR to store my Docker image
+resource "aws_ecr_repository" "ecr_repo" {
+  name                 = var.name
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy" {
+  repository = aws_ecr_repository.ecr_repo.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 10 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+

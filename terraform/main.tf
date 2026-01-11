@@ -18,15 +18,6 @@ provider "kubectl" {
 provider "helm" {}
 
 
-module "ecr" {
-  source               = "./modules/ecr"
-  name                 = "go-app"
-  scan_on_push         = true
-  region               = "eu-west-2"
-  image_tag_mutability = "IMMUTABLE"
-}
-
-
 module "vpc" {
   source             = "./modules/vpc"
   vpc_flow_logs_role = module.iam.vpc_flow_logs_role

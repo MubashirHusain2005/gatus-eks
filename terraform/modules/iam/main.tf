@@ -115,7 +115,6 @@ resource "aws_iam_role" "vpc_flow_logs_role" {
   })
 }
 
-
 resource "aws_iam_policy" "vpc_flow_logs_policy" {
   name = "vpc-flow-logs-cloudwatch-policy"
 
@@ -144,93 +143,3 @@ resource "aws_iam_role_policy_attachment" "vpc_flow_logs_attach" {
 }
 
 
-#OIDC for github actions
-
-data "tls_certificate" "github_actions" {
-  url = "https://token.actions.githubusercontent.com"
-}
-
-
-resource "aws_iam_openid_connect_provider" "oidc" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazon.aws"]
-  thumbprint_list = [data.tls_certificate.github_actions.certificates[0].sha1_fingerprint]
-}
-
-
-resource "aws_iam_role" "github_oidc_role" {
-  name = "github.to.aws.oidc"
-  assume_role_policy = jsonencode({
-    "Version" : "2012-10-17",
-    "Statement" : [
-      {
-        "Effect" : "Allow",
-        "Principal" : {
-          "Federated" : "arn:aws:iam::038774803581:oidc-provider/token.actions.githubusercontent.com"
-        },
-        "Action" : "sts:AssumeRoleWithWebIdentity",
-        "Condition" : {
-          "StringEquals" : {
-            "token.actions.githubusercontent.com:aud" : "sts.amazonaws.com"
-          },
-          "StringLike" : {
-            "token.actions.githubusercontent.com:sub" : "repo:MubashirHusain2005/gatus-eks:*"
-          }
-        }
-      },
-    ]
-  })
-}
-
-
-#IAM Role for ECR
-
-resource "aws_iam_role" "ecr_role" {
-  name = "ecr"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "sts:AssumeRole",
-          "sts:TagSession"
-        ]
-        Effect = "Allow"
-        Principal = {
-          Federated = "ec2.amazonaws.com"
-        }
-      },
-    ]
-  })
-}
-
-
-resource "aws_iam_policy" "ecr_policy" {
-  name = "ecr-policy"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:DescribeImages",
-          "ecr:DescribeRepositories",
-          "ecr:CompleteLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:InitiateLayerUpload",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:PutImage",
-          "ecr:BatchGetImage",
-          "ecr:GetAuthorizationToken"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecr_policy" {
-  policy_arn = aws_iam_policy.ecr_policy.arn
-  role       = aws_iam_role.ecr_role.id
-}
