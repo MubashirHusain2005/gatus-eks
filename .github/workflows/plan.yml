@@ -36,11 +36,14 @@ jobs:
     - name: Set up Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: latest
+        terraform_version: 1.13.3
 
     - name: Initialise Terraform
       working-directory: ./terraform
       run: terraform init -backend-config="bucket=$S3_BUCKET"
+
+    - name: Check Terraform Version
+      run: terraform version
 
 
     - name: Terraform Plan
@@ -49,6 +52,6 @@ jobs:
 
 
     - name: Terraform apply
-      id: apply
+      working-directory: ./terraform
       run: terraform apply -parallelism=1 --auto-approve
 
