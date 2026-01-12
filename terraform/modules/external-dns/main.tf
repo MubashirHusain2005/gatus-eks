@@ -21,6 +21,17 @@ terraform {
   }
 }
 
+resource "kubectl_manifest" "external_dns_namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+EOF
+}
+
+
+
 resource "kubernetes_service_account_v1" "external_dns" {
   metadata {
     name      = "external-dns"
@@ -30,16 +41,6 @@ resource "kubernetes_service_account_v1" "external_dns" {
     }
   }
   depends_on = [kubectl_manifest.external_dns_namespace]
-}
-
-
-resource "kubectl_manifest" "external_dns_namespace" {
-  yaml_body = <<EOF
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: external-dns
-EOF
 }
 
 

@@ -219,4 +219,4 @@ EOF
 
 ####On favorites tab on google there is actually a demonstration to show
 ###how HPA works
-##Karpenter scales nodes
+##Karpenter scales nodes not pods

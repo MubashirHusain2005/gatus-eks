@@ -121,7 +121,7 @@ resource "aws_iam_role" "github_oidc_role" {
       {
         "Effect" : "Allow",
         "Principal" : {
-          "Federated" = aws_iam_openid_connect_provider.oidc.arn
+          "Federated" = "${aws_iam_openid_connect_provider.oidc.arn}"
         },
         "Action" : "sts:AssumeRoleWithWebIdentity",
         "Condition" : {
