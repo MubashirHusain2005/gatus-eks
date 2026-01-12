@@ -43,6 +43,7 @@ variable "priv_subnet2b_id" {
 }
 
 variable "kms_key_arn" {
-  type = string
+  type        = string
+  description = "KMS key ARN used for EKS secrets encryption"
 }
 

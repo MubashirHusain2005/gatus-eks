@@ -38,7 +38,7 @@ module "eks" {
   nodegroup_role_arn   = module.iam.nodegroup_role_arn
   priv_subnet2a_id     = module.vpc.priv_subnet2a_id
   priv_subnet2b_id     = module.vpc.priv_subnet2b_id
-  kms_key_arn          = module.vpc.kms_key_arn
+  kms_key_arn          = aws_kms_key.kms_key.arn
 
 
   depends_on = [

@@ -109,6 +109,63 @@ resource "aws_iam_openid_connect_provider" "oidc" {
   thumbprint_list = [data.tls_certificate.github_actions.certificates[0].sha1_fingerprint]
 }
 
+#KMS encryption used later for EKS Cluster
+
+resource "aws_kms_key" "kms_key" {
+  description             = "Encryption KMS key"
+  enable_key_rotation     = true
+  deletion_window_in_days = 20
+}
+
+resource "aws_kms_alias" "kms_alias" {
+  name          = "alias/exampleKey"
+  target_key_id = aws_kms_key.kms_key.id
+}
+
+
+resource "aws_kms_key_policy" "kms_key_policy" {
+  key_id = aws_kms_key.kms_key.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Sid    = "EnableRootPermissions"
+        Effect = "Allow"
+
+        Principal = {
+          AWS = "arn:aws:iam::038774803581:root"
+        }
+
+        Action   = "kms:*"
+        Resource = "*"
+      },
+
+      {
+        Sid    = "AllowEKSUseOfKey"
+        Effect = "Allow"
+
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+
+
 
 resource "aws_iam_role" "github_oidc_role" {
   name = var.oidc_name
@@ -137,69 +194,108 @@ resource "aws_iam_role" "github_oidc_role" {
   })
 }
 
-resource "aws_iam_policy" "oidc_access_s3" {
-  name        = "s3_access"
+resource "aws_iam_policy" "oidc_access_aws" {
+  name        = "oidc_access_aws"
   path        = "/"
-  description = "Policy to access S3 during CI/CD"
+  description = "Policy to access AWS resources during CI/CD"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+
       {
-        "Sid" : "ListStateBucket",
-        "Effect" : "Allow",
-        "Action" : "s3:ListBucket",
-        "Resource" : "arn:aws:s3:::mhusains3"
+        Sid      = "ListStateBucket"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = "arn:aws:s3:::mhusains3"
       },
       {
-        "Sid" : "ReadWriteStateObject",
-        "Effect" : "Allow",
-        "Action" : [
+        Sid    = "ReadWriteStateObject"
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject"
-        ],
-        "Resource" : "arn:aws:s3:::mhusains3/*"
+        ]
+        Resource = "arn:aws:s3:::mhusains3/*"
       },
+
+
       {
-        "Sid": "DynamoDBIndexAndStreamAccess",
-            "Effect": "Allow",
-            "Action": [
-                "dynamodb:GetShardIterator",
-                "dynamodb:Scan",
-                "dynamodb:Query",
-                "dynamodb:DescribeStream",
-                "dynamodb:GetRecords",
-                "dynamodb:ListStreams"
-            ],
-            "Resource": [
-                "arn:aws:dynamodb:eu-west-2:038774803581:table/terraform-lock"
-            ]
-        },
-        {
-            "Sid": "DynamoDBTableAccess",
-            "Effect": "Allow",
-            "Action": [
-                "dynamodb:BatchGetItem",
-                "dynamodb:BatchWriteItem",
-                "dynamodb:ConditionCheckItem",
-                "dynamodb:PutItem",
-                "dynamodb:DescribeTable",
-                "dynamodb:DeleteItem",
-                "dynamodb:GetItem",
-                "dynamodb:Scan",
-                "dynamodb:Query",
-                "dynamodb:UpdateItem"
-            ],
-            "Resource": "arn:aws:dynamodb:eu-west-2:038774803581:table/terraform-lock"
-        },
+        Sid    = "DynamoDBTableAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:DescribeTable",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = "arn:aws:dynamodb:eu-west-2:038774803581:table/terraform-lock"
+      },
+
+      {
+        Sid    = "AccessToKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:CreateKey",
+          "kms:DescribeKey",
+          "kms:EnableKey",
+          "kms:PutKeyPolicy",
+          "kms:TagResource",
+          "kms:CreateAlias",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = "*"
+      },
+
+
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "*"
+      },
+
+
+      {
+        Sid    = "AutoScalingEKS"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:CreateAutoScalingGroup",
+          "autoscaling:UpdateAutoScalingGroup",
+          "autoscaling:DeleteAutoScalingGroup",
+          "autoscaling:DescribeAutoScalingGroups"
+        ]
+        Resource = "*"
+      },
+
+
+      {
+        Sid    = "ElasticLoadBalancing"
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:CreateLoadBalancer",
+          "elasticloadbalancing:CreateTargetGroup",
+          "elasticloadbalancing:CreateListener",
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DeleteLoadBalancer"
+        ]
+        Resource = "*"
+      }
     ]
   })
 }
 
 resource "aws_iam_role_policy_attachment" "oidc_s3_access" {
   role       = aws_iam_role.github_oidc_role.name
-  policy_arn = aws_iam_policy.oidc_access_s3.arn
+  policy_arn = aws_iam_policy.oidc_access_aws.arn
 }
 
 
@@ -295,5 +391,6 @@ resource "aws_ecr_lifecycle_policy" "ecr_policy" {
     ]
   })
 }
+
 
 
