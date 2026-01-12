@@ -198,7 +198,8 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "kms:Encrypt",
           "kms:Decrypt",
           "kms:GenerateDataKey*",
-          "kms:ReEncrypt*"
+          "kms:ReEncrypt*",
+          "kms:CreateGrant"
         ]
         Resource = "*"
       },
@@ -219,13 +220,19 @@ resource "aws_iam_policy" "oidc_access_aws" {
 
 
       {
-        Sid    = "AutoScalingEKS"
+        Sid    = "EKS"
         Effect = "Allow"
         Action = [
           "autoscaling:CreateAutoScalingGroup",
           "autoscaling:UpdateAutoScalingGroup",
           "autoscaling:DeleteAutoScalingGroup",
-          "autoscaling:DescribeAutoScalingGroups"
+          "autoscaling:DescribeAutoScalingGroups",
+          "eks:CreateCluster",
+          "eks:TagResource",
+          "eks:DescribeCluster",
+          "eks:DeleteCluster",
+          "eks:CreateNodegroup",
+          "eks:DeleteNodegroup"
         ]
         Resource = "*"
       },
