@@ -72,3 +72,4 @@ variable "inst_tenancy" {
 variable "vpc_flow_logs_role" {
   type = string
 }
+

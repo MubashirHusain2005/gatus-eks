@@ -22,6 +22,66 @@ terraform {
   }
 }
 
+#KMS encryption used later for EKS Cluster encryption
+
+resource "aws_kms_key" "kms_key" {
+  description             = "Encryption KMS key"
+  enable_key_rotation     = true
+  deletion_window_in_days = 20
+}
+
+
+
+resource "aws_kms_alias" "kms_alias" {
+  name          = "alias/exampleKey"
+  target_key_id = aws_kms_key.kms_key.id
+ 
+}
+
+
+
+resource "aws_kms_key_policy" "kms_key_policy" {
+  key_id = aws_kms_key.kms_key.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Sid    = "EnableRootPermissions"
+        Effect = "Allow"
+
+        Principal = {
+          AWS = "arn:aws:iam::038774803581:root"
+        }
+
+        Action   = "kms:*"
+        Resource = "*"
+      },
+
+      {
+        Sid    = "AllowEKSUseOfKey"
+        Effect = "Allow"
+
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+
 resource "aws_vpc" "eks_vpc" {
   cidr_block           = var.vpc_cidr
   instance_tenancy     = var.inst_tenancy
@@ -200,7 +260,6 @@ resource "aws_cloudwatch_log_group" "cloud_watch_logs" {
   name              = "logs_for_cloudwatch"
   retention_in_days = 7
   kms_key_id        = aws_kms_key.kms_key.id
-
 }
 
 
