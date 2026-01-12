@@ -34,19 +34,15 @@ jobs:
         role-to-assume: ${{ secrets.AWS_CREDENTIALS }}
         aws-region: ${{ vars.AWS_REGION }}
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: latest
-
+   
     - name: Initialise Terraform
       working-directory: ./terraform
-      run: terraform init -backend-config="bucket=$S3_BUCKET"
+      run: terraform init 
 
 
     - name: Terraform apply
       id: apply
-      run: terraform apply -parallelism=1 --auto-approve
+      run: terraform apply --auto-approve
 
 
     
