@@ -267,19 +267,19 @@ resource "aws_route_table_association" "private-route-association-2b" {
 
 ###CloudWatch for VPC logs
 
-resource "aws_flow_log" "cloud_watch" {
-  iam_role_arn    = var.vpc_flow_logs_role
-  log_destination = aws_cloudwatch_log_group.cloud_watch_logs.arn
-  traffic_type    = "ALL"
-  vpc_id          = aws_vpc.eks_vpc.id
-}
+#resource "aws_flow_log" "cloud_watch" {
+ # iam_role_arn    = var.vpc_flow_logs_role
+  #log_destination = aws_cloudwatch_log_group.cloud_watch_logs.arn
+  #traffic_type    = "ALL"
+ #vpc_id          = aws_vpc.eks_vpc.id
+#}
 
 #Stores the log streams
-resource "aws_cloudwatch_log_group" "cloud_watch_logs" {
-  name              = "logs_for_cloudwatch"
-  retention_in_days = 7
-  kms_key_id        = aws_kms_key.kms_key.id
-}
+#resource "aws_cloudwatch_log_group" "cloud_watch_logs" {
+  #name              = "logs_for_cloudwatch"
+ # retention_in_days = 7
+  #kms_key_id        = aws_kms_key.kms_key.arn
+#}
 
 
 
