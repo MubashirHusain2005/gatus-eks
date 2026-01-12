@@ -77,8 +77,7 @@ module "manifests" {
   source                   = "./modules/manifests"
   cluster_endpoint         = module.eks.cluster_endpoint
   letsencrypt_staging_name = module.cert-manager.letsencrypt_staging_name
-  ecr_repo_name            = module.ecr.ecr_repo_name
-  ecr_repository_url       = module.ecr.ecr_repository_url
+
 
   depends_on = [
 

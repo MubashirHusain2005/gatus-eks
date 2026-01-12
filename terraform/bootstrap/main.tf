@@ -6,7 +6,7 @@ provider "aws" {
 
 resource "aws_s3_bucket" "terraform_state" {
   bucket = "mhusains3"
-  
+
 
   lifecycle {
     prevent_destroy = false
@@ -145,23 +145,23 @@ resource "aws_iam_policy" "oidc_access_s3" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-       {
-      "Sid": "ListStateBucket",
-      "Effect": "Allow",
-      "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::mhusains3"
-    },
-    {
-      "Sid": "ReadWriteStateObject",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject"
-      ],
-      "Resource": "arn:aws:s3:::mhusains3/*"
-    }
-  ]
+      {
+        "Sid" : "ListStateBucket",
+        "Effect" : "Allow",
+        "Action" : "s3:ListBucket",
+        "Resource" : "arn:aws:s3:::mhusains3"
+      },
+      {
+        "Sid" : "ReadWriteStateObject",
+        "Effect" : "Allow",
+        "Action" : [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        "Resource" : "arn:aws:s3:::mhusains3/*"
+      }
+    ]
   })
 }
 
@@ -185,7 +185,7 @@ resource "aws_iam_role" "ecr_role" {
         ]
         Effect = "Allow"
         Principal = {
-          Service =  "ec2.amazonaws.com"
+          Service = "ec2.amazonaws.com"
         }
       },
     ]

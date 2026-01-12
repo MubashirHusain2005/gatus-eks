@@ -88,7 +88,7 @@ spec:
             app: my-app
       containers:
       - name: gatusapp
-        image: ${var.ecr_repository_url}:v1
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/ecr_repo
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
