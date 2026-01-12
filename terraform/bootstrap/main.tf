@@ -160,7 +160,39 @@ resource "aws_iam_policy" "oidc_access_s3" {
           "s3:DeleteObject"
         ],
         "Resource" : "arn:aws:s3:::mhusains3/*"
-      }
+      },
+      {
+        "Sid": "DynamoDBIndexAndStreamAccess",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:GetShardIterator",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:ListStreams"
+            ],
+            "Resource": [
+                "arn:aws:dynamodb:eu-west-2:038774803581:table/terraform-lock"
+            ]
+        },
+        {
+            "Sid": "DynamoDBTableAccess",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:PutItem",
+                "dynamodb:DescribeTable",
+                "dynamodb:DeleteItem",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem"
+            ],
+            "Resource": "arn:aws:dynamodb:eu-west-2:038774803581:table/terraform-lock"
+        },
     ]
   })
 }
