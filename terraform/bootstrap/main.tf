@@ -188,7 +188,17 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "kms:PutKeyPolicy",
           "kms:TagResource",
           "kms:CreateAlias",
-          "kms:ScheduleKeyDeletion"
+          "kms:ScheduleKeyDeletion",
+          "kms:EnableKeyRotation",
+          "kms:GetKeyPolicy",
+          "kms:GetKeyRotationStatus",
+          "kms:ListResourceTags",
+          "kms:ListAliases",
+          "kms:DeleteAlias",
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:ReEncrypt*"
         ]
         Resource = "*"
       },

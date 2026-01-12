@@ -35,7 +35,7 @@ resource "aws_kms_key" "kms_key" {
 resource "aws_kms_alias" "kms_alias" {
   name          = "alias/exampleKey"
   target_key_id = aws_kms_key.kms_key.id
- 
+
 }
 
 
@@ -60,6 +60,24 @@ resource "aws_kms_key_policy" "kms_key_policy" {
       },
 
       {
+        Sid    = "AllowCloudWatchLogsUseOfKey"
+        Effect = "Allow"
+
+        Principal = {
+          Service = "logs.eu-west-2.amazonaws.com"
+        }
+
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+
+        Resource = "*"
+      },
+      {
         Sid    = "AllowEKSUseOfKey"
         Effect = "Allow"
 
@@ -73,13 +91,14 @@ resource "aws_kms_key_policy" "kms_key_policy" {
           "kms:ReEncrypt*",
           "kms:GenerateDataKey*",
           "kms:DescribeKey"
-        ]
+        ],
 
         Resource = "*"
-      }
+      },
     ]
   })
 }
+
 
 
 resource "aws_vpc" "eks_vpc" {
