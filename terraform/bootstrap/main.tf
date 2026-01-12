@@ -6,7 +6,7 @@ provider "aws" {
 
 resource "aws_s3_bucket" "terraform_state" {
   bucket = "mhusains3"
-  region = "eu-west-2"
+  
 
   lifecycle {
     prevent_destroy = false
@@ -27,7 +27,7 @@ resource "aws_s3_bucket_versioning" "versioning" {
   }
 }
 
-## Enable encryption using KMS key I created before
+## Enable encryption 
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
   bucket = aws_s3_bucket.terraform_state.id
@@ -64,7 +64,6 @@ resource "aws_s3_bucket_policy" "terraform_state" {
         Principal = "*"
         Action    = "s3:*"
         Resource = [
-          aws_s3_bucket.terraform_state.arn,
           "${aws_s3_bucket.terraform_state.arn}/*"
         ]
         Condition = {
@@ -138,9 +137,37 @@ resource "aws_iam_role" "github_oidc_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "ecr_push" {
+resource "aws_iam_policy" "oidc_access_s3" {
+  name        = "s3_access"
+  path        = "/"
+  description = "Policy to access S3 during CI/CD"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+       {
+      "Sid": "ListStateBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::mhusains3"
+    },
+    {
+      "Sid": "ReadWriteStateObject",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::mhusains3/*"
+    }
+  ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "oidc_s3_access" {
   role       = aws_iam_role.github_oidc_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+  policy_arn = aws_iam_policy.oidc_access_s3.arn
 }
 
 
@@ -158,7 +185,7 @@ resource "aws_iam_role" "ecr_role" {
         ]
         Effect = "Allow"
         Principal = {
-          Federated = "ec2.amazonaws.com"
+          Service =  "ec2.amazonaws.com"
         }
       },
     ]
