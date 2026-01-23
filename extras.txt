@@ -1,0 +1,4340 @@
+#Security Group for the nodes
+
+resource "aws_security_group" "eks_nodes" {
+  name        = var.nodes_name
+  description = "Security group for all nodes in the cluster"
+  vpc_id      = aws_vpc.eks-vpc.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+        Name                                            = "node-sg"
+        "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+  }
+}
+
+resource "aws_security_group_rule" "nodes" {
+  description              = "Allow nodes to communicate with each other"
+  from_port                = 0
+  protocol                 = "-1"
+  security_group_id        = aws_security_group.eks_nodes.id
+  source_security_group_id = aws_security_group.eks_nodes.id
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+resource "aws_security_group_rule" "nodes_inbound" {
+  description              = "Allow worker Kubelets and pods to receive communication from the cluster control plane"
+  from_port                = 1025
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.eks_nodes.id
+  source_security_group_id = aws_security_group.eks_cluster.id
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+
+#IAM role for nodes
+resource "aws_iam_role" "nodes" {
+  name = "eks-node-group"
+
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+    Version = "2012-10-17"
+  })
+}
+
+#IAM policies for the nodes
+resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.nodes.name
+}
+
+
+
+
+resource "aws_eks_node_group" "private-nodes" {
+  cluster_name  = aws_eks_cluster.eks_cluster.name
+  node_role_arn = aws_iam_role.nodes.arn
+  node_group_name = "eks-node-group"
+
+  subnet_ids = [
+    aws_subnet.private-subnet-2a.id,
+    aws_subnet.private-subnet-2b.id
+  ]
+
+  capacity_type  = "ON_DEMAND"
+  instance_types = ["t3.large"]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  tags = {
+    Environment = "prod"
+    Project     = "eks-assignment"
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.AmazonEC2ContainerRegistryReadOnly,
+  ]
+
+}
+
+
+FROM golang:1.25.5-alpine3.22 AS build
+
+WORKDIR /app
+
+RUN addgroup -S app && adduser -S app -G app
+
+USER app
+
+COPY --from=builder /app/app /app/app
+
+COPY --from=builder /app/config.yaml ./config.yaml
+
+ENV GATUS_CONFIG_PATH=/app/config.yaml
+
+EXPOSE 8080 
+
+CMD ["/app/app"]
+
+
+
+
+
+
+##Deployment.yml 
+
+resource "kubernetes_manifest" "deployment" {
+  manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+
+    metadata = {
+      name      = "my-app"
+      namespace = "app-space"
+      labels = {
+        app = "my-app"
+      }
+    }
+
+    spec = {
+      replicas = 2
+
+      selector = {
+        matchLabels = {
+          app = "my-app"
+        }
+      }
+
+      template = {
+        metadata = {
+          labels = {
+            app = "my-app"
+          }
+        }
+
+        spec = {
+          containers = [
+            {
+              name  = "gatusapp"
+              image = "038774803581.dkr.ecr.eu-west-2.amazonaws.com/gatusapp:latest"
+
+              ports = [
+                {
+                  containerPort = 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+
+##Service.yml 
+
+resource "kubernetes_manifest" "service" {
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Service"
+
+    metadata = {
+      name      = "my-app"
+      namespace = "app-space"
+    }
+
+    spec = {
+      selector = {
+        app = "my-app"
+      }
+
+      ports = [
+        {
+          port       = 80
+          targetPort = 8080
+        }
+      ]
+
+      type = "ClusterIP"
+    }
+  }
+}
+
+
+
+
+##Kubernetes + Helm providers + Kubectl
+
+provider "kubernetes" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = aws_eks_cluster.eks_cluster.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+}
+
+provider "kubectl" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+  load_config_file       = false
+}
+
+
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = aws_eks_cluster.eks_cluster.name
+}
+##1 nginx-ingress controller
+
+resource "helm_release" "nginx_ingress" {
+  name             = "ingress-nginx1"
+  namespace        = "app-space"
+  create_namespace = true
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  version          = "4.8.3"
+  atomic           = false
+  lint             = true
+  wait             = true
+
+
+  set = [
+    {
+      name  = "controller.service.type"
+      value = "LoadBalancer"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
+      value = "nlb"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
+      value = "internet-facing"
+    },
+
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-nlb-target-type"
+      value = "instance"
+    },
+    {
+      name  = "controller.hostNetwork"
+      value = "true"
+    },
+    {
+      name  = "controller.service.externalTrafficPolicy"
+      value = "Local"
+    }
+  ]
+  depends_on = [
+   aws_eks_node_group.private-nodes
+  ]
+}
+
+
+##2  Cert manager
+
+resource "helm_release" "cert_manager" {
+  name             = "cert-manager"
+  namespace        = "cert-manager"
+  create_namespace = true
+  repository       = "https://charts.jetstack.io"
+  chart            = "cert-manager"
+  version          = "1.16.2"
+
+  # Helm-level behavior settings (apply to the release, not the chart values)
+  wait   = true
+  atomic = true
+
+  # Chart value overrides
+  set = [
+    {
+      name  = "installCRDs"
+      value = "true"
+    },
+  ]
+
+ depends_on = [
+  aws_eks_node_group.private-nodes
+]
+
+}
+
+
+#3  Cluster_issuer yaml file
+resource "kubectl_manifest" "letsencrypt_staging" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert-staging
+    solvers:
+    - dns01:
+        route53:
+          hostedZoneID: "Z09331692XTWCNAOSXR5T"
+          region: "eu-west-2"
+EOF
+}
+
+resource "kubectl_manifest" "letsencrypt_prod" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server:  https://acme-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert
+    solvers:
+    - dns01:
+        route53:
+          hostedZoneID: "Z09331692XTWCNAOSXR5T"
+          region: "eu-west-2"
+          hostedZoneName: "mubashir.site."
+EOF
+}
+
+resource "kubectl_manifest" "deployment_svc" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-space
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: app-space
+  labels:
+    app: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      serviceAccountName: my-service-account
+      containers:
+      - name: gatusapp
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/gatusapp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-gatus-app
+  namespace: app-space
+spec:
+  selector:
+    app: my-app
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+EOF
+}
+
+resource "kubectl_manifest" "ingress" {
+  yaml_body = <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - mubashir.site
+    secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: service-gatus-app
+                port:
+                  number: 80
+EOF
+}
+
+
+##6 External DNS
+
+resource "kubectl_manifest" "external_dns_namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+EOF
+}
+
+
+resource "aws_iam_role" "external_dns" {
+  name = "iam-dns"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:external-dns:external-dns",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+
+resource "aws_iam_role_policy" "external_dns_route53" {
+  name = "external-dns-route53-policy"
+  role = aws_iam_role.external_dns.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListResourceRecordSets"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "kubernetes_service_account_v1" "svc-dns" {
+  metadata {
+    name      = "external-dns"
+    namespace = "external-dns"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
+    }
+  }
+
+  depends_on = [
+    kubectl_manifest.external_dns_namespace
+  ]
+}
+
+
+resource "helm_release" "external_dns" {
+  name             = "external-dns"
+  namespace        = "external-dns"
+  create_namespace = false
+
+  repository = "https://kubernetes-sigs.github.io/external-dns/"
+  chart      = "external-dns"
+  version    = "1.14.0"
+
+  wait   = true
+
+  set = [
+    {
+      name  = "provider"
+      value = "aws"
+    },
+
+    {
+      name  = "aws.region"
+      value = "eu-west-2"
+    },
+
+    {
+      name  = "serviceAccount.create"
+      value = "false"
+    },
+
+    {
+      name  = "serviceAccount.name"
+      value = "external-dns"
+    },
+
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.external_dns.arn
+    }
+  ]
+
+  depends_on = [
+    aws_iam_role.external_dns,
+    aws_iam_role_policy.external_dns_route53
+  ]
+}
+
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: app-space
+  name: service-gatus-app
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+spec:
+  type: ClusterIP
+  selector:
+    app: my-app
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+
+
+      #ArgoCD 
+
+resource "helm_release" "argocd" {
+  name              = "argocd"
+  repository        = "https://argoproj.github.io/argo-helm"
+  chart             = "argo-cd"
+  version           = "5.24.1" 
+  namespace         = "argo-cd"
+  create_namespace  = true
+  timeout           = 500
+
+
+
+  set = [
+    {
+    name  = "server.service.type"
+    value = "LoadBalancer" 
+  },
+  {
+    name  = "server.ingress.enabled"
+    value = "true"
+  }
+]
+  depends_on = [ aws_eks_node_group.private-nodes ]
+}
+
+
+###VPC Networking
+
+resource "aws_vpc" "eks_vpc" {
+  cidr_block           = "10.0.0.0/16"
+  instance_tenancy     = "default"
+  enable_dns_hostnames = var.enable_host
+  enable_dns_support   = var.enable_support
+
+  tags = {
+    Name = "Main-VPC"
+  }
+}
+
+
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  tags = {
+    Name = "IGW"
+  }
+
+  depends_on = [aws_vpc.eks_vpc]
+}
+
+resource "aws_subnet" "public-subnet-2a" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "eu-west-2a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name                                        = "Public-subnet-2a"
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+  }
+}
+
+
+resource "aws_subnet" "public-subnet-2b" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "eu-west-2b"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name                                        = "Public-subnet-2b"
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+  }
+}
+
+
+
+resource "aws_route_table" "public-rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+  Name = "public-rt" }
+
+  depends_on = [aws_vpc.eks_vpc, aws_internet_gateway.igw]
+}
+
+
+
+resource "aws_route_table_association" "pub-route-association-2a" {
+
+  route_table_id = aws_route_table.public-rt.id
+  subnet_id      = aws_subnet.public-subnet-2a.id
+
+}
+
+resource "aws_route_table_association" "pub-route-association-2b" {
+  route_table_id = aws_route_table.public-rt.id
+  subnet_id      = aws_subnet.public-subnet-2b.id
+}
+
+
+
+resource "aws_subnet" "private-subnet-2a" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = "eu-west-2a"
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name                                        = "Private-subnet-2a"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+  }
+}
+
+resource "aws_subnet" "private-subnet-2b" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.4.0/24"
+  availability_zone       = "eu-west-2b"
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name                                        = "Private-subnet-2b"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+  }
+}
+
+
+resource "aws_eip" "ngw-eip" {
+  domain = "vpc"
+
+  tags = {
+    Name = "eip"
+  }
+
+  depends_on = [aws_internet_gateway.igw]
+}
+
+resource "aws_nat_gateway" "ngw" {
+  subnet_id     = aws_subnet.public-subnet-2b.id
+  allocation_id = aws_eip.ngw-eip.id
+
+  tags = {
+    Name = "igw-nat"
+  }
+
+  depends_on = [aws_internet_gateway.igw, aws_eip.ngw-eip]
+}
+
+
+
+resource "aws_route_table" "private-rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.ngw.id
+  }
+
+  tags = {
+    Name = "private-rt"
+
+  }
+
+  depends_on = [aws_nat_gateway.ngw]
+
+}
+
+resource "aws_route_table_association" "private-route-association-2a" {
+
+  route_table_id = aws_route_table.private-rt.id
+  subnet_id      = aws_subnet.private-subnet-2a.id
+
+
+}
+
+resource "aws_route_table_association" "private-route-association-2b" {
+
+  route_table_id = aws_route_table.private-rt.id
+  subnet_id      = aws_subnet.private-subnet-2b.id
+
+}
+
+##IAM Roles and Policies
+
+#IAM Role for the cluster
+resource "aws_iam_role" "cluster" {
+  name = "eks-cluster"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+#IAM policies for the cluster
+resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.cluster.name
+}
+
+
+resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSBlockStoragePolicy" {
+  role       = aws_iam_role.cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy"
+}
+
+
+resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSLoadBalancingPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy"
+  role       = aws_iam_role.cluster.name
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSVPCResourceController" {
+  role       = aws_iam_role.cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSServicePolicy" {
+  role       = aws_iam_role.cluster.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+}
+
+#IAM role for nodes
+
+
+resource "aws_iam_instance_profile" "nodes" {
+  name = "eks-node-group-profile"
+  role = aws_iam_role.nodes.name
+}
+
+
+resource "aws_iam_role" "nodes" {
+  name = "eks-node-group"
+
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+    Version = "2012-10-17"
+  })
+}
+
+#IAM policies for the nodes
+resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonSSMManagedInstanceCore" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.nodes.name
+}
+
+
+#EKS AWS authentication
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
+}
+
+
+
+#EKS 
+
+resource "aws_eks_cluster" "eks_cluster" {
+  name    = "eks-cluster"
+  version = "1.30"
+
+  role_arn = aws_iam_role.cluster.arn
+
+  # Controls how Kubernetes API authentication works
+  access_config {
+    authentication_mode                         = "API"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
+
+  # Tells EKS which subnets to use for control-plane ENIs
+  vpc_config {
+    subnet_ids = [
+      aws_subnet.private-subnet-2a.id,
+      aws_subnet.private-subnet-2b.id
+    ]
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+
+  tags = {
+    Environment = "labs"
+    Project     = "eks-assignment"
+  }
+
+
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy,
+    aws_iam_role_policy_attachment.cluster_AmazonEKSBlockStoragePolicy,
+    aws_iam_role_policy_attachment.cluster_AmazonEKSLoadBalancingPolicy,
+    aws_iam_role_policy_attachment.cluster_AmazonEKSVPCResourceController,
+  ]
+}
+
+#Kubernetes addons
+resource "aws_eks_addon" "vpc-cni" {
+  cluster_name                = aws_eks_cluster.eks_cluster.name
+  addon_name                  = "vpc-cni"
+  resolve_conflicts_on_update = "OVERWRITE"
+}
+
+
+
+resource "aws_eks_addon" "kube-proxy" {
+  cluster_name                = aws_eks_cluster.eks_cluster.name
+  addon_name                  = "kube-proxy"
+  resolve_conflicts_on_update = "OVERWRITE"
+}
+
+##EBS CSI Driver 
+
+
+resource "aws_iam_role" "ebs_csi-driver" {
+  name = "ebs-csi-driver"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "storage" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi-driver.name
+}
+
+
+
+resource "aws_eks_addon" "csi-driver" {
+  cluster_name                = aws_eks_cluster.eks_cluster.name
+  addon_name                  = "aws-ebs-csi-driver"
+  resolve_conflicts_on_update = "OVERWRITE"
+  resolve_conflicts_on_create = "OVERWRITE"
+  configuration_values        = null
+  preserve                    = true
+  service_account_role_arn    = aws_iam_role.ebs_csi-driver.arn
+
+  depends_on = [ aws_eks_cluster.eks_cluster,
+                aws_iam_openid_connect_provider.eks
+  ]
+
+}
+
+
+#KMS Encryption
+
+resource "aws_kms_key" "kms_key" {
+  description             = "Encryption KMS key"
+  enable_key_rotation     = true
+  deletion_window_in_days = 20
+}
+
+resource "aws_kms_alias" "kms_alias" {
+  name          = "alias/exampleKey"
+  target_key_id = aws_kms_key.kms_key.id
+}
+
+resource "aws_kms_key_policy" "kms_key_policy" {
+  key_id = aws_kms_key.kms_key.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Sid    = "EnableRootPermissions"
+        Effect = "Allow"
+
+        Principal = {
+          AWS = "arn:aws:iam::038774803581:root"
+        }
+
+        Action   = "kms:*"
+        Resource = "*"
+      },
+
+      {
+        Sid    = "AllowEKSUseOfKey"
+        Effect = "Allow"
+
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+
+
+##Node Group
+resource "aws_eks_node_group" "private-nodes" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_role_arn   = aws_iam_role.nodes.arn
+  node_group_name = "eks-node-group"
+
+  subnet_ids = [
+    aws_subnet.private-subnet-2a.id,
+    aws_subnet.private-subnet-2b.id
+  ]
+
+  capacity_type  = "ON_DEMAND"
+  instance_types = ["t3.medium"]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 2
+    min_size     = 1
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+
+  tags = {
+    "kubernetes.io/cluster/${aws_eks_cluster.eks_cluster.name}" = "owned"
+  }
+
+
+
+  depends_on = [aws_iam_role_policy_attachment.AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.AmazonEC2ContainerRegistryReadOnly,
+    aws_iam_role_policy_attachment.AmazonSSMManagedInstanceCore
+  ]
+
+}
+
+##Kubernetes + Helm providers + Kubectl
+
+provider "kubernetes" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = aws_eks_cluster.eks_cluster.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+}
+
+provider "kubectl" {
+  host                   = aws_eks_cluster.eks_cluster.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.eks_cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+  load_config_file       = false
+}
+
+
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = aws_eks_cluster.eks_cluster.name
+}
+##1 nginx-ingress controller
+
+resource "helm_release" "nginx_ingress" {
+  name             = "ingress-nginx"
+  namespace        = "ingress-nginx"
+  create_namespace = true
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  version          = "4.8.3"
+  atomic           = false
+  lint             = true
+  wait             = true
+  timeout          = 600
+
+
+  set = [
+    {
+      name  = "controller.service.type"
+      value = "LoadBalancer"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
+      value = "nlb"
+    },
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
+      value = "internet-facing"
+    },
+
+    {
+      name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-nlb-target-type"
+      value = "instance"
+    },
+    {
+      name  = "controller.hostNetwork"
+      value = "true"
+    },
+
+    {
+      name  = "controller.replicaCount"
+      value = "1"
+    },
+    {
+      name  = "controller.service.externalTrafficPolicy"
+      value = "Local"
+    }
+  ]
+  depends_on = [
+    aws_eks_node_group.private-nodes
+  ]
+}
+
+
+##2  Cert manager
+
+resource "helm_release" "cert_manager" {
+  name       = "cert-manager"
+  repository = "https://charts.jetstack.io"
+  chart      = "cert-manager"
+  namespace  = "cert-manager"
+  version    = "1.16.1"
+
+  create_namespace = true
+  wait             = true
+  timeout          = 600
+
+  set = [
+    {
+      name  = "installCRDs"
+      value = "true"
+    },
+
+  ]
+
+  depends_on = [aws_eks_node_group.private-nodes]
+}
+
+
+
+
+
+#3  Cluster_issuer yaml file
+resource "kubectl_manifest" "letsencrypt_staging" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert-staging
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+
+  depends_on = [
+    helm_release.cert_manager
+  ]
+}
+
+resource "kubectl_manifest" "letsencrypt_prod" {
+  yaml_body = <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server:  https://acme-v02.api.letsencrypt.org/directory
+    email: stokemubashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-nginx-cert
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+
+  depends_on = [
+    helm_release.cert_manager
+  ]
+}
+
+resource "kubectl_manifest" "namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-space
+EOF
+}
+
+resource "kubectl_manifest" "deployment" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: app-space
+  labels:
+    app: my-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: gatusapp
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/gatusapp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+
+EOF
+
+  depends_on = [
+    aws_eks_node_group.private-nodes,
+
+  ]
+
+}
+
+resource "kubectl_manifest" "service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-gatus-app
+  namespace: app-space
+spec:
+  selector:
+    app: my-app
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
+EOF
+}
+
+
+
+resource "kubectl_manifest" "ingress" {
+  yaml_body = <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: ${var.cert_issuer}
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+      - mubashir.site
+    secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: service-gatus-app
+                port:
+                  number: 80
+EOF
+
+  depends_on = [
+    kubectl_manifest.deployment,
+    kubectl_manifest.letsencrypt_staging,
+    helm_release.nginx_ingress
+  ]
+
+}
+
+
+##6 External DNS
+
+resource "kubectl_manifest" "external_dns_namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+EOF
+}
+
+
+
+resource "aws_iam_role" "external_dns" {
+  name = "iam-dns"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:external-dns:external-dns",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+
+resource "aws_iam_role_policy" "external_dns_route53" {
+  name = "external-dns-route53-policy"
+  role = aws_iam_role.external_dns.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListResourceRecordSets"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "kubernetes_service_account_v1" "external_dns" {
+  metadata {
+    name      = "external-dns"
+    namespace = "external-dns"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
+    }
+  }
+  depends_on = [kubectl_manifest.external_dns_namespace]
+}
+
+
+resource "helm_release" "external_dns" {
+  name             = "external-dns"
+  namespace        = "external-dns"
+  create_namespace = false
+  repository       = "https://kubernetes-sigs.github.io/external-dns/"
+  chart            = "external-dns"
+  version          = "1.14.0"
+
+  wait    = true
+  timeout = 600
+
+  set = [
+    {
+      name  = "provider"
+      value = "aws"
+    },
+    {
+      name  = "aws.region"
+      value = "eu-west-2"
+    },
+    {
+      name  = "serviceAccount.create"
+      value = "false"
+    },
+    {
+      name  = "serviceAccount.name"
+      value = "external-dns"
+    },
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.external_dns.arn
+    }
+  ]
+
+  depends_on = [
+    kubectl_manifest.external_dns_namespace,
+    kubernetes_service_account_v1.external_dns,
+    aws_iam_role.external_dns,
+    aws_iam_role_policy.external_dns_route53
+  ]
+}
+
+#ArgoCD 
+
+resource "helm_release" "argocd" {
+  name              = "argocd"
+  repository        = "https://argoproj.github.io/argo-helm"
+  chart             = "argo-cd"
+  version           = "5.24.1" 
+  namespace         = "argo-cd"
+  create_namespace  = true
+  timeout           = 500
+
+
+
+  set = [
+    {
+    name  = "server.service.type"
+    value = "LoadBalancer" 
+  },
+  {
+    name  = "server.ingress.enabled"
+    value = "true"
+  }
+]
+  depends_on = [ aws_eks_node_group.private-nodes ]
+}
+
+
+
+arn:aws:iam::038774803581:role/github.to.aws.oicd@
+
+
+
+
+resource "kubectl_manifest" "HorizontalPodAutoscaler" {
+  yaml_body = <<EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: robotshop-hpa
+  namespace: app-space
+  labels:
+    app: my-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+
+  minReplicas: 2
+  maxReplicas: 10  
+
+ 
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70  
+  
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0   
+      policies:
+        - type: Percent
+          value: 100                  
+          periodSeconds: 15
+        - type: Pods
+          value: 4                    
+          periodSeconds: 15
+      selectPolicy: Max                
+
+    scaleDown:
+      stabilizationWindowSeconds: 300 
+      policies:
+        - type: Percent
+          value: 50                   
+          periodSeconds: 60
+EOF
+
+  depends_on = [
+    kubectl_manifest.deployment
+  ]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!--# include file="eum.html" -->
+    <title>Stan's Robot Shop</title>
+    <link rel="shortcut icon" type="image/png" href="/media/instana_icon_square.png"/>
+    <style type="text/css">
+        @import url('https://fonts.googleapis.com/css?family=Orbitron');
+        @import url('/css/style.css');
+        @import url('/css/auto-complete.css');
+    </style>
+    <meta http-equiv="Cache-Control" content="no-Cache">
+    <meta http-equiv="Pragma" content="no-cache">
+</head>
+
+<body ng-app="robotshop">
+<div ng-controller="shopform">
+    <h1><a href="/">Stan's Robot Shop</a></h1>
+    <span id="stan">
+        <img src="/media/stan.png"/>
+    </span>
+    <span id="search">
+        <form>
+            <input type="text" size="20" ng-model="data.searchText"/>
+            <button ng-click="search();">Search</button>
+        </form>
+    </span>
+
+    <div class="row">
+        <!-- left nav -->
+        <div class="nav column">
+            <h3><a href="login">Login / Register</a></h3>
+            <h3><a href="cart">Cart</a></h3>
+            <div ng-if="data.cart.total == 0" class="carttotal">
+                Empty
+            </div>
+            <div ng-if="data.cart.total != 0" class="carttotal">
+                &euro;{{ data.cart.total.toFixed(2) }}
+            </div>
+            <h3>Categories</h3>
+            <ul class="products">
+                <li ng-repeat="cat in data.categories">
+                    <span ng-click="getProducts(cat);" class="category">{{ cat }}</span>
+                    <ul ng-if="data.products[cat]">
+                        <li ng-repeat="prod in data.products[cat]">
+                            <a class="product" href="product/{{ prod.sku }}">{{ prod.name }}</a>
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+
+        <!-- main display area -->
+        <div class="main column">
+            <div ng-view></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        {{ data.uniqueid }}
+    </div>
+
+</div>
+
+<!-- JavaScript -->
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.7/angular.js"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.7/angular-route.js"></script>
+<script src="/js/auto-complete.js"></script>
+<script src="/js/controller.js"></script>
+<script type="text/javascript">
+    angular.element(document.getElementsByTagName('head')).append(angular.element('<base href="' + window.location.pathname + '" />'));
+</script>
+
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+resource "kubectl_manifest" "deployment_cart" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-cart
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart
+      color: green
+  template:
+    metadata:
+      labels:
+        app: cart
+        color: green
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: cart
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: cart
+            color: green
+      containers:
+      - name: robot-app-cart
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/cart:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: cart
+EOF
+
+  depends_on = [
+    kubectl_manifest.resource_quota_appspace
+  ]
+
+}
+
+
+resource "kubectl_manifest" "deployment_catalogue" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-catalogue
+  namespace: app-space 
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalogue
+  template:
+    metadata:
+      labels:
+        app: catalogue
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: catalogue
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: catalogue
+            color: green
+      containers:
+      - name: robot-app-catalogue
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/catalogue:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalogue
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: catalogue
+EOF
+
+  depends_on = [
+    kubectl_manifest.resource_quota_appspace
+  ]
+
+}
+
+
+resource "kubectl_manifest" "deployment_dispatch" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-dispatch
+  namespace: app-space
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dispatch
+  template:
+    metadata:
+      labels:
+        app: dispatch
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: dispatch
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: dispatch
+      containers:
+      - name: robot-app-dispatch
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/dispatch:v1
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+
+
+EOF
+
+  depends_on = [
+    kubectl_manifest.resource_quota_appspace
+  ]
+
+}
+
+
+resource "kubectl_manifest" "mongo_storageclass" {
+
+  yaml_body = <<EOF
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mongo-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  kmsKeyId:  ${var.kms_key_arn}
+
+EOF
+
+}
+
+resource "kubectl_manifest" "mongo_statefulset" {
+
+  yaml_body = <<EOF
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: mongo
+      namespace: data-space
+      labels:
+        app: mongo
+    spec:
+      clusterIP: None
+      selector:
+        app: mongo
+      ports: 
+      - port: 27017
+        targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: data-space
+spec:
+  serviceName: mongo              
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+     affinity:
+       nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+        - name: mongo
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mongo:v1
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongo-persistent-storage
+              mountPath: /data/db
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-persistent-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: mongo-gp3
+        resources:
+          requests:
+            storage: 10Gi
+    
+EOF
+}
+
+resource "kubectl_manifest" "mysql_secret" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: app-space
+type: Opaque
+stringData:
+  root-password: secret
+  user-password: secret
+EOF
+}
+
+
+
+resource "kubectl_manifest" "mysql_storageclass" {
+  yaml_body = <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mysql-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  kmsKeyId: ${var.kms_key_arn}
+EOF
+}
+
+
+
+resource "kubectl_manifest" "mysql_statefulset" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: app-space
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: data-space
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+      - name: mysql
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v1
+        ports:
+        - containerPort: 3306
+          name: mysql
+        env:
+        - name: MYSQL_DATABASE
+          value: cities
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: root-password
+        - name: MYSQL_USER
+          value: shipping
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: user-password
+
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+
+        
+        startupProbe:
+          exec:
+            command:
+              - sh
+              - -c
+              - mysqladmin ping -h localhost --silent
+          failureThreshold: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          exec:
+            command:
+              - sh
+              - -c
+              - mysqladmin ping -h localhost --silent
+          initialDelaySeconds: 20
+          periodSeconds: 10
+
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: mysql-gp3
+      resources:
+        requests:
+          storage: 10Gi
+
+EOF
+
+  depends_on = [
+    kubectl_manifest.mysql_storageclass,
+    kubectl_manifest.resource_quota_appspace,
+    kubectl_manifest.mysql_secret
+  ]
+}
+
+resource "kubectl_manifest" "redis_configmap" {
+
+  yaml_body = <<EOF
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+data:
+  redis.conf: |
+    appendonly yes
+    appendfsync everysec
+
+EOF
+}
+
+
+resource "kubectl_manifest" "storageclass_redis" {
+
+  yaml_body = <<EOF
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: redis-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  kmsKeyId:  ${var.kms_key_arn}
+
+EOF
+}
+
+resource "kubectl_manifest" "redis_statefulset" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: data-space
+  labels:
+    app: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: data-space
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+      - name: redis
+        image: redis:6.2-alpine
+        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /usr/local/etc/redis/redis.conf
+          subPath: redis.conf
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: redis-gp3
+      resources:
+        requests:
+          storage: 10Gi
+
+EOF
+
+  depends_on = [
+    kubectl_manifest.storageclass_redis,
+    kubectl_manifest.resource_quota_dataspace,
+    kubectl_manifest.redis_configmap
+  ]
+}
+
+resource "kubectl_manifest" "rabbitmq_deployment" {
+  yaml_body = <<EOF
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: data-space
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - protocol: TCP
+      port: 5672
+      targetPort: 5672
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: data-space
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.8-management-alpine
+        ports:
+        - containerPort: 5672
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+   
+EOF
+}
+
+
+resource "kubectl_manifest" "deployment_payment" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-payment
+  namespace: app-space
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: robotshop-payment
+  template:
+    metadata:
+      labels:
+        app: robotshop-payment
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: robotshop-payment
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: robotshop-payment
+      containers:
+      - name: robot-app-payment
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/payment:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  namespace: app-space
+spec:
+  selector:
+    app: robotshop-payment
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+
+
+resource "kubectl_manifest" "deployment_ratings" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-ratings
+  namespace: app-space
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: robotshop-ratings
+  template:
+    metadata:
+      labels:
+        app: robotshop-ratings
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: robotshop-ratings
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: robotshop-ratings
+      containers:
+      - name: robot-app-ratings
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/ratings:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ratings
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    app: robotshop-ratings
+EOF
+
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+
+resource "kubectl_manifest" "deployment_shipping" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-shipping
+  namespace: app-space
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shipping
+  template:
+    metadata:
+      labels:
+        app: shipping
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: shipping
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: shipping
+      containers:
+      - name: robot-app-shipping
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "500Mi"
+          limits:
+            cpu: "200m"
+            memory: "1000Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 20
+          failureThreshold: 30
+          periodSeconds: 10
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipping
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: shipping
+EOF
+
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+
+resource "kubectl_manifest" "deployment_user" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop.user
+  namespace: app-space
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user
+  template:
+    metadata:
+      labels:
+        app: user
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: user
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: user
+      containers:
+      - name: robot-app-user
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/user:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: user
+EOF
+
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+
+
+resource "kubectl_manifest" "deployment_web" {
+
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: app-space
+  labels:
+    app: web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - apps
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: robotshop-web
+                  color: green
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: robot-app-web
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/web:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "60Mi"
+          limits:
+            cpu: "200m"
+            memory: "100Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: app-space
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: web
+EOF
+
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+resource "kubectl_manifest" "deployment_shipping" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-shipping
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shipping
+  template:
+    metadata:
+      labels:
+        app: shipping
+    spec:
+      containers:
+      - name: robot-app-shipping
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MYSQL_HOST
+          value: mysql.data-space
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 20
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "500Mi"
+          limits:
+            cpu: "200m"
+            memory: "1000Mi"
+EOF
+
+  depends_on = [
+    kubectl_manifest.shipping_service,
+    kubectl_manifest.resource_quota_appspace,
+    kubectl_manifest.mysql_service,
+    kubectl_manifest.mysql_statefulset
+  ]
+}
+
+
+
+
+resource "kubectl_manifest" "deployment_shipping" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-shipping
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shipping
+  template:
+    metadata:
+      labels:
+        app: shipping
+    spec:
+      containers:
+      - name: robot-app-shipping
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MYSQL_HOST
+          value: mysql.data-space
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 20
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "500Mi"
+          limits:
+            cpu: "200m"
+            memory: "1000Mi"
+EOF
+
+  depends_on = [
+    kubectl_manifest.shipping_service,
+    kubectl_manifest.resource_quota_appspace,
+    kubectl_manifest.mysql_service,
+    kubectl_manifest.mysql_statefulset
+  ]
+}
+
+
+resource "kubectl_manifest" "shipping_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipping
+  namespace: app-space
+spec:
+  selector:
+    app: shipping
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+
+
+
+
+
+############Old java file 
+
+package com.instana.robotshop.shipping;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import javax.sql.DataSource;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Bean;
+
+@Configuration
+public class JpaConfig {
+    private static final Logger logger = LoggerFactory.getLogger(JpaConfig.class);
+
+    @Bean
+    public DataSource getDataSource() {
+        String JDBC_URL = String.format("jdbc:mysql://%s/cities?useSSL=false&autoReconnect=true", System.getenv("DB_HOST") == null ? "mysql" : System.getenv("DB_HOST"));
+
+        logger.info("jdbc url {}", JDBC_URL);
+
+        DataSourceBuilder bob = DataSourceBuilder.create();
+
+        bob.driverClassName("com.mysql.jdbc.Driver");
+        bob.url(JDBC_URL);
+        bob.username("shipping");
+        bob.password("secret");
+
+        return bob.build();
+    }
+}
+
+
+
+#old conf file
+
+
+# Instana tracing
+opentracing_load_tracer /usr/local/lib/libinstana_sensor.so /etc/instana-config.json;
+opentracing_propagate_context;
+
+server {
+    listen       8080;
+    server_name  localhost;
+
+    proxy_http_version 1.1;
+
+    #charset koi8-r;
+    #access_log  /var/log/nginx/host.access.log  main;
+    #error_log /dev/stdout debug;
+    #rewrite_log on;
+
+    location / {
+        root   /usr/share/nginx/html;
+        index  index.html index.htm;
+        ssi    on;
+    }
+
+    location /images/ {
+        expires 5s;
+        root   /usr/share/nginx/html;
+        try_files $uri /images/placeholder.png;
+    }
+
+    #error_page  404              /404.html;
+
+    # redirect server error pages to the static page /50x.html
+    #
+    error_page   500 502 503 504  /50x.html;
+    location = /50x.html {
+        root   /usr/share/nginx/html;
+    }
+
+    # proxy the PHP scripts to Apache listening on 127.0.0.1:80
+    #
+    #location ~ \.php$ {
+    #    proxy_pass   http://127.0.0.1;
+    #}
+
+    # pass the PHP scripts to FastCGI server listening on 127.0.0.1:9000
+    #
+    #location ~ \.php$ {
+    #    root           html;
+    #    fastcgi_pass   127.0.0.1:9000;
+    #    fastcgi_index  index.php;
+    #    fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;
+    #    include        fastcgi_params;
+    #}
+
+    # deny access to .htaccess files, if Apache's document root
+    # concurs with nginx's one
+    #
+    #location ~ /\.ht {
+    #    deny  all;
+    #}
+
+    location /api/catalogue/ {
+        proxy_pass http://${CATALOGUE_HOST}:8080/;
+    }
+
+    location /api/user/ {
+        proxy_pass http://${USER_HOST}:8080/;
+    }
+
+    location /api/cart/ {
+        proxy_pass http://${CART_HOST}:8080/;
+    }
+
+    location /api/shipping/ {
+    proxy_pass http://${SHIPPING_HOST}:8080/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+    location /api/payment/ {
+        proxy_pass http://${PAYMENT_HOST}:8080/;
+    }
+
+    location /api/ratings/ {
+        proxy_pass http://${RATINGS_HOST}:80/;
+    }
+
+    location /nginx_status {
+        stub_status on;
+        access_log off;
+    }
+}
+
+
+
+
+
+# location /api/shipping/ {
+        #proxy_pass http://${SHIPPING_HOST}:8080/;
+    #}
+
+
+
+
+first conf file
+
+# Instana tracing
+opentracing_load_tracer /usr/local/lib/libinstana_sensor.so /etc/instana-config.json;
+opentracing_propagate_context;
+
+server {
+    listen 8080;
+    server_name localhost;
+
+    proxy_http_version 1.1;
+
+    # ===============================
+    # FRONTEND (SAFE SPA FIX)
+    # ===============================
+    location / {
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+
+        # SPA fallback (FIXES REFRESH 404)
+        try_files $uri $uri/ /index.html;
+
+        ssi on;
+    }
+
+    # ===============================
+    # Images
+    # ===============================
+    location /images/ {
+        expires 5s;
+        root /usr/share/nginx/html;
+        try_files $uri /images/placeholder.png;
+    }
+
+    # ===============================
+    # Error pages
+    # ===============================
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+
+    # ===============================
+    # APIs
+    # ===============================
+    location /api/catalogue/ {
+        proxy_pass http://${CATALOGUE_HOST}:8080/;
+    }
+
+    location /api/user/ {
+        proxy_pass http://${USER_HOST}:8080/;
+    }
+
+    location /api/cart/ {
+        proxy_pass http://${CART_HOST}:8080/;
+    }
+
+    location /api/shipping/ {
+        proxy_pass http://${SHIPPING_HOST}:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/payment/ {
+        proxy_pass http://${PAYMENT_HOST}:8080/;
+    }
+
+    location /api/ratings/ {
+        proxy_pass http://${RATINGS_HOST}:80/;
+    }
+
+    # ===============================
+    # Monitoring
+    # ===============================
+    location /nginx_status {
+        stub_status on;
+        access_log off;
+    }
+}
+
+
+
+
+
+#second conf file
+
+# Instana tracing
+opentracing_load_tracer /usr/local/lib/libinstana_sensor.so /etc/instana-config.json;
+opentracing_propagate_context;
+
+server {
+    listen 8080;
+    server_name localhost;
+
+    resolver kube-dns.kube-system.svc.cluster.local valid=10s;
+
+    proxy_http_version 1.1;
+
+    # ===============================
+    # FRONTEND (SAFE SPA FIX)
+    # ===============================
+    location / {
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+
+        # SPA fallback (FIXES REFRESH 404)
+        try_files $uri $uri/ /index.html;
+
+        ssi on;
+    }
+
+    # ===============================
+    # Images
+    # ===============================
+    location /images/ {
+        expires 5s;
+        root /usr/share/nginx/html;
+        try_files $uri /images/placeholder.png;
+    }
+
+    # ===============================
+    # Error pages
+    # ===============================
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+
+    # ===============================
+    # APIs
+    # ===============================
+    location /api/catalogue/ {
+        proxy_pass http://${CATALOGUE_HOST}:8080/;
+    }
+
+    location /api/user/ {
+        proxy_pass http://${USER_HOST}:8080/;
+    }
+
+    location /api/cart/ {
+        proxy_pass http://${CART_HOST}:8080/;
+    }
+
+    location /api/shipping/ {
+        proxy_pass http://${SHIPPING_HOST}:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/payment/ {
+        proxy_pass http://${PAYMENT_HOST}:8080/;
+    }
+
+    location /api/ratings/ {
+        proxy_pass http://${RATINGS_HOST}:80/;
+    }
+
+    # ===============================
+    # Monitoring
+    # ===============================
+    location /nginx_status {
+        stub_status on;
+        access_log off;
+    }
+}
+
+
+#####3 conf file
+
+# Instana tracing
+opentracing_load_tracer /usr/local/lib/libinstana_sensor.so /etc/instana-config.json;
+opentracing_propagate_context;
+
+server {
+    listen 8080;
+    server_name localhost;
+
+    proxy_http_version 1.1;
+
+    # ===============================
+    # FRONTEND (SAFE SPA FIX)
+    # ===============================
+    location / {
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+
+        # SPA fallback (FIXES REFRESH 404)
+        try_files $uri $uri/ /index.html;
+
+        ssi on;
+    }
+
+    # ===============================
+    # Images
+    # ===============================
+    location /images/ {
+        expires 5s;
+        root /usr/share/nginx/html;
+        try_files $uri /images/placeholder.png;
+    }
+
+    # ===============================
+    # Error pages
+    # ===============================
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+
+    # ===============================
+    # APIs
+    # ===============================
+    location /api/catalogue/ {
+        proxy_pass http://${CATALOGUE_HOST}:8080/;
+    }
+
+    location /api/user/ {
+        proxy_pass http://${USER_HOST}:8080/;
+    }
+
+    location /api/cart/ {
+        proxy_pass http://${CART_HOST}:8080/;
+    }
+
+    location /api/shipping/ {
+        proxy_pass http://${SHIPPING_HOST}:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/payment/ {
+        proxy_pass http://${PAYMENT_HOST}:8080/;
+    }
+
+    location /api/ratings/ {
+        proxy_pass http://${RATINGS_HOST}:80/;
+    }
+
+    # ===============================
+    # Monitoring
+    # ===============================
+    location /nginx_status {
+        stub_status on;
+        access_log off;
+    }
+}
+
+
+
+
+old .sh file
+
+#!/usr/bin/env bash
+
+# set -x
+
+# echo "arg 1 $1"
+
+
+BASE_DIR=/usr/share/nginx/html
+
+if [ -n "$1" ]
+then
+    exec "$@"
+fi
+
+if [ -n "$INSTANA_EUM_KEY" -a -n "$INSTANA_EUM_REPORTING_URL" ]
+then
+    echo "Enabling Instana EUM"
+    result=$(curl -kv -s --connect-timeout 10 "$INSTANA_EUM_REPORTING_URL" 2>&1 | grep "301 Moved Permanently")
+    if [ -n "$result" ]; 
+    then
+        echo '301 Moved Permanently found!'
+        [[ "${INSTANA_EUM_REPORTING_URL}" != */ ]] &&  INSTANA_EUM_REPORTING_URL="${INSTANA_EUM_REPORTING_URL}/"
+        sed -i "s|INSTANA_EUM_KEY|$INSTANA_EUM_KEY|" $BASE_DIR/eum-tmpl.html
+        sed -i "s|INSTANA_EUM_REPORTING_URL|$INSTANA_EUM_REPORTING_URL|" $BASE_DIR/eum-tmpl.html
+        cp $BASE_DIR/eum-tmpl.html $BASE_DIR/eum.html
+    else
+        echo "Go with the user input"
+        sed -i "s|INSTANA_EUM_KEY|$INSTANA_EUM_KEY|" $BASE_DIR/eum-tmpl.html
+        sed -i "s|INSTANA_EUM_REPORTING_URL|$INSTANA_EUM_REPORTING_URL|" $BASE_DIR/eum-tmpl.html
+        cp $BASE_DIR/eum-tmpl.html $BASE_DIR/eum.html
+    fi
+
+else
+    echo "EUM not enabled"
+    cp $BASE_DIR/empty.html $BASE_DIR/eum.html
+fi
+
+# make sure nginx can access the eum file
+chmod 644 $BASE_DIR/eum.html
+
+# apply environment variables to default.conf
+envsubst '${CATALOGUE_HOST} ${USER_HOST} ${CART_HOST} ${SHIPPING_HOST} ${PAYMENT_HOST} ${RATINGS_HOST}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+
+if [ -f /tmp/ngx_http_opentracing_module.so -a -f /tmp/libinstana_sensor.so ]
+then
+    echo "Patching for Instana tracing"
+    mv /tmp/ngx_http_opentracing_module.so /usr/lib/nginx/modules
+    mv /tmp/libinstana_sensor.so /usr/local/lib
+    cat - /etc/nginx/nginx.conf << !EOF! > /tmp/nginx.conf
+# Extra configuration for Instana tracing
+load_module modules/ngx_http_opentracing_module.so;
+
+# Pass through these env vars
+env INSTANA_SERVICE_NAME;
+env INSTANA_AGENT_HOST;
+env INSTANA_AGENT_PORT;
+env INSTANA_MAX_BUFFERED_SPANS;
+env INSTANA_DEV;
+!EOF!
+
+    mv /tmp/nginx.conf /etc/nginx/nginx.conf
+    echo "{}" > /etc/instana-config.json
+else
+    echo "Tracing not enabled"
+    # remove tracing config
+    sed -i '1,3d' /etc/nginx/conf.d/default.conf
+fi
+
+exec nginx-debug -g "daemon off;"
+
+
+
+
+
+
+
+
+
+
+
+038774803581.dkr.ecr.eu-west-2.amazonaws.com/mongo:v1
+
+
+
+
+
+
+
+
+
+#####Controller.js
+
+(function(angular) {
+    'use strict';
+
+    var robotshop = angular.module('robotshop', ['ngRoute'])
+
+    // Share user between controllers
+    robotshop.factory('currentUser', function() {
+        var data = {
+            uniqueid: '',
+            user: {},
+            cart: {
+                total: 0
+            }
+        };
+
+        return data;
+    });
+
+    robotshop.config(['$routeProvider', '$locationProvider', ($routeProvider, $locationProvider) => {
+        $routeProvider.when('/', {
+            templateUrl: 'splash.html',
+            controller: 'shopform'
+        }).when('/search/:text', {
+            templateUrl: 'search.html',
+            controller: 'searchform'
+        }).when('/product/:sku', {
+            templateUrl: 'product.html',
+            controller: 'productform'
+        }).when('/login', {
+            templateUrl: 'login.html',
+            controller: 'loginform'
+        }).when('/cart', {
+            templateUrl: 'cart.html',
+            controller: 'cartform'
+        }).when('/shipping', {
+            templateUrl: 'shipping.html',
+            controller: 'shipform'
+        }).when('/payment', {
+            templateUrl: 'payment.html',
+            controller: 'paymentform'
+        }).otherwise({
+            redirectTo: '/'
+        });
+
+        // needed for URL rewrite hash
+        $locationProvider.html5Mode(true);
+    }]);
+
+    // clear template fragment cache, development
+    // TODO - disable this later
+    robotshop.run(function($rootScope, $templateCache) {
+        $rootScope.$on('$viewContentLoaded', function() {
+            console.log('>>> clearing cache');
+            $templateCache.removeAll();
+        });
+
+        // Instana EUM
+        // may not be loaded so check for ineum object
+        $rootScope.$on('$routeChangeSuccess', (event, next, current) => {
+            if(typeof ineum !== 'undefined') {
+                //console.log('route change', event, next, current);
+                ineum('page', next.loadedTemplateUrl);
+            }
+        });
+    });
+
+    robotshop.controller('shopform', function($scope, $http, $location, currentUser) {
+        $scope.data = {};
+
+        $scope.data.uniqueid = 'foo';
+        $scope.data.categories = [];
+        $scope.data.products = {};
+        $scope.data.searchText = '';
+        // empty cart
+        $scope.data.cart = {
+            total: 0
+        };
+
+        $scope.getProducts = function(category) {
+            if($scope.data.products[category]) {
+                $scope.data.products[category] = null;
+            } else {
+                $http({
+                    url: '/api/catalogue/products/' + category,
+                    method: 'GET'
+                }).then((res) => {
+                    $scope.data.products[category] = res.data;
+                }).catch((e) => {
+                    console.log('ERROR', e);
+                });
+            }
+        };
+
+        $scope.search = function() {
+            if($scope.data.searchText) {
+                $location.url('/search/' + $scope.data.searchText);
+                $scope.data.searchText = '';
+            }
+        };
+
+        function getCategories() {
+            $http({
+                url: '/api/catalogue/categories',
+                method: 'GET'
+            }).then((res) => {
+                $scope.data.categories = res.data;
+                console.log('categories loaded');
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+
+        // unique id for cart etc
+        function getUniqueid() {
+            return new Promise((resolve, reject) => {
+            $http({
+                url: '/api/user/uniqueid',
+                method: 'GET'
+            }).then((res) => {
+                resolve(res.data.uuid);
+            }).catch((e) => {
+                console.log('ERROR', e);
+                reject(e);
+            });
+        });
+        }
+
+        // init
+        console.log('shopform starting...');
+        getCategories();
+        if(!currentUser.uniqueid) {
+            console.log('generating uniqueid');
+            getUniqueid().then((id) => {
+                $scope.data.uniqueid = id;
+                currentUser.uniqueid = id;
+                // update metadata
+                if(typeof ineum !== 'undefined') {
+                    ineum('user', id);
+                    ineum('meta', 'environment', 'production');
+                    ineum('meta', 'variant', 'normal price');
+                }
+
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+        
+        // watch for login
+        $scope.$watch(() => { return currentUser.uniqueid; }, (newVal, oldVal) => {
+            if(newVal !== oldVal) {
+                $scope.data.uniqueid = currentUser.uniqueid;
+                if(typeof ineum !== 'undefined') {
+                    if(! currentUser.uniqueid.startsWith('anonymous')) {
+                        console.log('Setting user details', currentUser);
+                        ineum('user', currentUser.uniqueid, currentUser.user.name, currentUser.user.email);
+                    }
+                }
+            }
+        });
+
+        // watch for cart changes
+        $scope.$watch(() => { return currentUser.cart.total; }, (newVal, oldVal) => {
+            if(newVal !== oldVal) {
+                $scope.data.cart = currentUser.cart;
+            }
+        });
+    });
+
+    robotshop.controller('searchform', function($scope, $http, $routeParams) {
+        $scope.data = {};
+        $scope.data.searchResults = [];
+
+        function search(text) {
+            if(text) {
+                $http({
+                    url: '/api/catalogue/search/' + text,
+                    method: 'GET'
+                }).then((res) => {
+                    console.log('search results', res.data);
+                    $scope.data.searchResults = res.data;
+                }).catch((e) => {
+                    console.log('ERROR', e);
+                });
+            }
+        }
+
+        var text = $routeParams.text;
+        console.log('search init with', text);
+        search(text);
+    });
+
+    robotshop.controller('productform', function($scope, $http, $routeParams, $timeout, currentUser) {
+        $scope.data = {};
+        $scope.data.message = ' ';
+        $scope.data.product = {};
+        $scope.data.rating = {};
+        $scope.data.rating.avg_rating = 0;
+        $scope.data.quantity = 1;
+
+        $scope.addToCart = function() {
+            var url = '/api/cart/add/' + currentUser.uniqueid + '/' + $scope.data.product.sku + '/' + $scope.data.quantity;
+            console.log('addToCart', url);
+            $http({
+                url: url,
+                method: 'GET'
+            }).then((res) => {
+                console.log('cart', res.data);
+                currentUser.cart = res.data;
+                $scope.data.message = 'Added to cart';
+                $timeout(clearMessage, 3000);
+            }).catch((e) => {
+                console.log('ERROR', e);
+                $scope.data.message = 'ERROR ' + e;
+                $timeout(clearMessage, 3000);
+            });
+        };
+
+        $scope.rateProduct = function(score) {
+            console.log('rate product', $scope.data.product.sku, score);
+            var url = '/api/ratings/api/rate/' + $scope.data.product.sku + '/' + score;
+            $http({
+                url: url,
+                method: 'PUT'
+            }).then((res) => {
+                $scope.data.message = 'Thank you for your feedback';
+                $timeout(clearMessage, 3000);
+                loadRating($scope.data.product.sku);
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        };
+        
+        $scope.glowstan = function(vote, val) {
+            console.log('glowstan', vote);
+            var idx = vote;
+            while(idx > 0) {
+                document.getElementById('vote-' + idx).style.opacity = val;
+                idx--;
+            }
+        };
+
+        function loadProduct(sku) {
+            $http({
+                url: '/api/catalogue/product/' + sku,
+                method: 'GET'
+            }).then((res) => {
+                $scope.data.product = res.data;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+
+        function loadRating(sku) {
+            $http({
+                url: '/api/ratings/api/fetch/' + sku,
+                method: 'GET'
+            }).then((res) => {
+                $scope.data.rating = res.data;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+
+        function clearMessage() {
+            console.log('clear message');
+            $scope.data.message = ' ';
+        }
+        
+        loadProduct($routeParams.sku);
+        loadRating($routeParams.sku);
+    });
+
+    robotshop.controller('cartform', function($scope, $http, $location, currentUser) {
+        $scope.data = {};
+        $scope.data.cart = {};
+        $scope.data.cart.total = 0;
+        $scope.data.uniqueid = currentUser.uniqueid;
+
+        $scope.buy = function() {
+            $location.url('/shipping');
+        };
+        
+        $scope.change = function(sku, qty) {
+            // update the cart
+            var url = '/api/cart/update/' + $scope.data.uniqueid + '/' + sku + '/' + qty;
+            console.log('change', url);
+            $http({
+                url: url,
+                method: 'GET'
+            }).then((res) => {
+                $scope.data.cart = res.data;
+                currentUser.cart = res.data;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        };
+
+        function loadCart(id) {
+            $http({
+                url: '/api/cart/cart/' + id,
+                method: 'GET'
+            }).then((res) => {
+                var cart = res.data;
+                // remove shipping - last item in cart
+                if(cart.items[cart.items.length - 1].sku == 'SHIP') {
+                    $http({
+                        url: '/api/cart/update/' + id + '/SHIP/0',
+                        method: 'GET'
+                    }).then((res) => {
+                        currentUser.cart = res.data;
+                        $scope.data.cart = res.data;
+                    }).catch((e) => {
+                        console.log('ERROR', e);
+                    });
+                } else {
+                    $scope.data.cart = cart;
+                }
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+
+        loadCart($scope.data.uniqueid);
+        console.log('cart init');
+    });
+
+    robotshop.controller('shipform', function($scope, $http, $location, currentUser) {
+        $scope.data = {};
+        $scope.data.countries = [];
+        $scope.data.selectedCountry = '';
+        $scope.data.selectedLocation = '';
+        $scope.data.disableCity = true;
+        $scope.data.disableCalc = true;
+        $scope.data.shipping = '';
+
+        $scope.calcShipping = function() {
+            console.log('calc uuid', uuid);
+            $http({
+                url: '/api/shipping/calc/' + uuid,
+                method: 'GET'
+            }).then((res) => {
+                console.log('shipping data', res.data);
+                $scope.data.shipping = res.data;
+                $scope.data.shipping.location = $scope.data.selectedCountry.name + ' ' + autoLocation;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        };
+
+        $scope.confirmShipping = function() {
+            console.log('shipping confirmed');
+            $http({
+                url: '/api/shipping/confirm/' + currentUser.uniqueid,
+                method: 'POST',
+                data: $scope.data.shipping
+            }).then((res) => {
+                // go to final confirmation
+                console.log('confirm cart', res.data);
+                // save new cart
+                currentUser.cart = res.data;
+                $location.url('/payment');
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        };
+
+        $scope.countryChanged = function() {
+            console.log('selected', $scope.data.selectedCountry);
+            if($scope.data.selectedCountry) {
+                $scope.data.disableCity = false;
+            }
+            $scope.data.selectedLocation = '';
+            $scope.data.disableCalc = true;
+            $scope.data.shipping = '';
+        };
+
+        // auto-complete
+        var autoLocation;
+        var uuid;
+
+        function loadCodes() {
+            $http({
+                url: '/api/shipping/codes',
+                method: 'GET'
+            }).then((res) => {
+                $scope.data.countries = res.data;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+        
+        function buildauto() {
+            autoLocation = new autoComplete({
+                selector: 'input[id=location]',
+                source: (term, suggest) => {
+                    console.log('autocomplete', term);
+                    $scope.data.disableCalc = true;
+                    $http({
+                        url: '/api/shipping/match/' + $scope.data.selectedCountry.code + '/' + term,
+                        method: 'GET'
+                    }).then((res) => {
+                        console.log('suggest', res.data);
+                        suggest(res.data);
+                    }).catch((e) => {
+                        console.log('ERROR', e);
+                    });
+                },
+                renderItem: (item, search) => {
+                    console.log('render', item, search);
+                    return '<div class="autocomplete-suggestion" loc-uuid="' + item.uuid + '" data-val="' + item.name + '">' + item.name + '</div>';
+                },
+                onSelect: (e, term, item) => {
+                    console.log('select', term, item);
+                    uuid = item.getAttribute('loc-uuid');
+                    autoLocation = item.getAttribute('data-val');
+                    $scope.data.disableCalc = false;
+                    $scope.data.shipping = '';
+                    // synchronise angular
+                    $scope.$apply();
+                }
+            });
+        }
+
+        console.log('shipform init');
+        loadCodes();
+        buildauto();
+    });
+
+    robotshop.controller('paymentform', function($scope, $http, currentUser) {
+        $scope.data = {};
+        $scope.data.message = ' ';
+        $scope.data.buttonDisabled = false;
+        $scope.data.cont = false;
+        $scope.data.uniqueid = currentUser.uniqueid;
+        $scope.data.cart = currentUser.cart;
+
+        $scope.pay = function() {
+            $scope.data.buttonDisabled = true;
+            $http({
+                url: '/api/payment/pay/' + $scope.data.uniqueid,
+                method: 'POST',
+                data: $scope.data.cart
+            }).then((res) => {
+                console.log('order', res.data);
+                $scope.data.message = 'Order placed ' + res.data.orderid;
+                // clear down cart
+                $scope.data.cart = {
+                    total: 0,
+                    items: []
+                };
+                currentUser.cart = $scope.data.cart;
+                $scope.data.cont = true;
+            }).catch((e) => {
+                console.log('ERROR', e);
+                $scope.data.message = 'ERROR placing order';
+                $scope.data.buttonDisabled = false;
+            });
+        };
+
+        console.log('paymentform init');
+    });
+
+    robotshop.controller('loginform', function($scope, $http, currentUser) {
+        $scope.data = {};
+        $scope.data.name = '';
+        $scope.data.email = '';
+        $scope.data.password = '';
+        $scope.data.password2 = '';
+        $scope.data.message = '';
+        $scope.data.user = {};
+
+        $scope.login = function() {
+            $scope.data.message = '';
+            $http({
+                url: '/api/user/login',
+                method: 'POST',
+                data: {
+                    name: $scope.data.name,
+                    password: $scope.data.password
+                }
+            }).then((res) => {
+                var oldId = currentUser.uniqueid;
+                $scope.data.user = res.data;
+                $scope.data.user.password = '';
+                $scope.data.password = $scope.data.password2 = '';
+                currentUser.user = $scope.data.user;
+                currentUser.uniqueid = $scope.data.user.name;
+                // login OK move cart across
+                $http({
+                    url: '/api/cart/rename/' + oldId + '/' + $scope.data.user.name,
+                    method: 'GET'
+                }).then((res) => {
+                    console.log('cart moved OK');
+                }).catch((e) => {
+                    // 404 is OK as cart might not exist yet
+                    console.log('ERROR', e);
+                });
+                loadHistory(currentUser.user.name);
+            }).catch((e) => {
+                console.log('ERROR', e);
+                $scope.data.message = 'ERROR ' + e.data;
+                $scope.data.password = '';
+            });
+        };
+
+        $scope.register = function() {
+            $scope.data.message = '';
+            $scope.data.name = $scope.data.name.trim();
+            $scope.data.email = $scope.data.email.trim();
+            $scope.data.password = $scope.data.password.trim();
+            $scope.data.password2 = $scope.data.password2.trim();
+            // all fields complete
+            if($scope.data.name && $scope.data.email && $scope.data.password && $scope.data.password2) {
+                if($scope.data.password !== $scope.data.password2) {
+                    $scope.data.message = 'Passwords do not match';
+                    $scope.data.password = $scope.data.password2 = '';
+                    return;
+                }
+            }
+            $http({
+                url: '/api/user/register',
+                method: 'POST',
+                data: {
+                    name: $scope.data.name,
+                    email: $scope.data.email,
+                    password: $scope.data.password
+                }
+            }).then((res) => {
+                $scope.data.user = {
+                    name: $scope.data.name,
+                    email: $scope.data.email
+                };
+                $scope.data.password = $scope.data.password2 = '';
+                currentUser.user = $scope.data.user;
+                currentUser.uniqueid = $scope.data.user.name;
+            }).catch((e) => {
+                console.log('ERROR', e);
+                $scope.data.message = 'ERROR ' + e.data;
+                $scope.data.password = $scope.data.password2 = '';
+            });
+        };
+
+        function loadHistory(id) {
+            $http({
+                url: '/api/user/history/' + id,
+                method: 'GET'
+            }).then((res) => {
+                console.log('history', res.data);
+                $scope.data.orderHistory = res.data.history;
+            }).catch((e) => {
+                console.log('ERROR', e);
+            });
+        }
+
+        console.log('loginform init');
+        if(!angular.equals(currentUser.user, {})) {
+            $scope.data.user = currentUser.user;
+            loadHistory(currentUser.user.name);
+        }
+    });
+
+}) (window.angular);
+
+
+
+####Working ingress
+
+resource "kubectl_manifest" "ingress" {
+  yaml_body = <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: robotshop-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mubashir.site
+      secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080
+EOF
+}
+
+
+
+####New conf file 
+
+server {
+    listen 8080;
+    server_name _;
+
+    proxy_http_version 1.1;
+
+    # ===============================
+    # FRONTEND (SPA)
+    # ===============================
+    location / {
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /images/ {
+        expires 5s;
+        root /usr/share/nginx/html;
+        try_files $uri /images/placeholder.png;
+    }
+
+    # ===============================
+    # APIs (SERVICE DNS ONLY)
+    # ===============================
+    location /api/catalogue/ {
+        proxy_pass http://catalogue:8080/;
+    }
+
+    location /api/user/ {
+        proxy_pass http://user:8080/;
+    }
+
+    location /api/cart/ {
+        proxy_pass http://cart:8080/;
+    }
+
+    location /api/shipping/ {
+        proxy_pass http://shipping:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/payment/ {
+        proxy_pass http://payment:8080/;
+    }
+
+    location /api/ratings/ {
+        proxy_pass http://ratings:8080/;
+    }
+
+    # ===============================
+    # Health
+    # ===============================
+    location /health {
+        return 200 "OK\n";
+    }
+}
+
+
+
+
+
+
+####Controller.java 
+
+package com.instana.robotshop.shipping;
+
+import java.util.List;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+
+@RestController
+public class Controller {
+    private static final Logger logger = LoggerFactory.getLogger(Controller.class);
+
+    private String CART_URL = String.format("http://%s/shipping/", getenv("CART_ENDPOINT", "cart"));
+
+    public static List bytesGlobal = Collections.synchronizedList(new ArrayList<byte[]>());
+
+    @Autowired
+    private CityRepository cityrepo;
+
+    @Autowired
+    private CodeRepository coderepo;
+
+    private String getenv(String key, String def) {
+        String val = System.getenv(key);
+        val = val == null ? def : val;
+
+        return val;
+    }
+
+    @GetMapping(path = "/memory")
+    public int memory() {
+        byte[] bytes = new byte[1024 * 1024 * 25];
+        Arrays.fill(bytes,(byte)8);
+        bytesGlobal.add(bytes);
+
+        return bytesGlobal.size();
+    }
+
+    @GetMapping(path = "/free")
+    public int free() {
+        bytesGlobal.clear();
+
+        return bytesGlobal.size();
+    }
+
+    @GetMapping("/health")
+    public String health() {
+        return "OK";
+    }
+
+    @GetMapping("/count")
+    public String count() {
+        long count = cityrepo.count();
+
+        return String.valueOf(count);
+    }
+
+    @GetMapping("/codes")
+    public Iterable<Code> codes() {
+        logger.info("all codes");
+
+        Iterable<Code> codes = coderepo.findAll(Sort.by(Sort.Direction.ASC, "name"));
+
+        return codes;
+    }
+
+    @GetMapping("/cities/{code}")
+    public List<City> cities(@PathVariable String code) {
+        logger.info("cities by code {}", code);
+
+        List<City> cities = cityrepo.findByCode(code);
+
+        return cities;
+    }
+
+    @GetMapping("/match/{code}/{text}")
+    public List<City> match(@PathVariable String code, @PathVariable String text) {
+        logger.info("match code {} text {}", code, text);
+
+        if (text.length() < 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        }
+
+        List<City> cities = cityrepo.match(code, text);
+        /*
+         * This is a dirty hack to limit the result size
+         * I'm sure there is a more spring boot way to do this
+         * TODO - neater
+         */
+        if (cities.size() > 10) {
+            cities = cities.subList(0, 9);
+        }
+
+        return cities;
+    }
+
+    @GetMapping("/calc/{id}")
+    public Ship caclc(@PathVariable long id) {
+        double homeLatitude = 51.164896;
+        double homeLongitude = 7.068792;
+
+        logger.info("Calculation for {}", id);
+
+        City city = cityrepo.findById(id);
+        if (city == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "city not found");
+        }
+
+        Calculator calc = new Calculator(city);
+        long distance = calc.getDistance(homeLatitude, homeLongitude);
+        // avoid rounding
+        double cost = Math.rint(distance * 5) / 100.0;
+        Ship ship = new Ship(distance, cost);
+        logger.info("shipping {}", ship);
+
+        return ship;
+    }
+
+    // enforce content type
+    @PostMapping(path = "/confirm/{id}", consumes = "application/json", produces = "application/json")
+    public String confirm(@PathVariable String id, @RequestBody String body) {
+        logger.info("confirm id: {}", id);
+        logger.info("body {}", body);
+
+        CartHelper helper = new CartHelper(CART_URL);
+        String cart = helper.addToCart(id, body);
+
+        if (cart.equals("")) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "cart not found");
+        }
+
+        return cart;
+    }
+}
+
+
+###Controller.java  
+
+package com.instana.robotshop.shipping;
+
+import java.util.List;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+
+@RestController
+public class Controller {
+
+    private static final Logger logger = LoggerFactory.getLogger(Controller.class);
+
+    // ✅ FIX: include port 8080
+    private final String CART_URL = String.format(
+        "http://%s:8080/shipping/",
+        getenv("CART_ENDPOINT", "cart")
+    );
+
+    public static List<byte[]> bytesGlobal =
+        Collections.synchronizedList(new ArrayList<>());
+
+    @Autowired
+    private CityRepository cityrepo;
+
+    @Autowired
+    private CodeRepository coderepo;
+
+    private static String getenv(String key, String def) {
+        String val = System.getenv(key);
+        return val == null ? def : val;
+    }
+
+    @GetMapping("/health")
+    public String health() {
+        return "OK";
+    }
+
+    @GetMapping("/codes")
+    public Iterable<Code> codes() {
+        logger.info("all codes");
+        return coderepo.findAll(Sort.by(Sort.Direction.ASC, "name"));
+    }
+
+    @GetMapping("/cities/{code}")
+    public List<City> cities(@PathVariable String code) {
+        return cityrepo.findByCode(code);
+    }
+
+    @GetMapping("/match/{code}/{text}")
+    public List<City> match(@PathVariable String code, @PathVariable String text) {
+        if (text.length() < 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        }
+
+        List<City> cities = cityrepo.match(code, text);
+        if (cities.size() > 10) {
+            cities = cities.subList(0, 9);
+        }
+        return cities;
+    }
+
+    @GetMapping("/calc/{id}")
+    public Ship calc(@PathVariable long id) {
+        City city = cityrepo.findById(id);
+        if (city == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "city not found");
+        }
+
+        Calculator calc = new Calculator(city);
+        long distance = calc.getDistance(51.164896, 7.068792);
+        double cost = Math.rint(distance * 5) / 100.0;
+
+        return new Ship(distance, cost);
+    }
+
+    @PostMapping(
+        path = "/confirm/{id}",
+        consumes = "application/json",
+        produces = "application/json"
+    )
+    public String confirm(@PathVariable String id, @RequestBody String body) {
+        logger.info("confirm id: {}", id);
+        logger.info("body {}", body);
+
+        CartHelper helper = new CartHelper(CART_URL);
+        String cart = helper.addToCart(id, body);
+
+        if (cart.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "cart not found");
+        }
+
+        return cart;
+    }
+}

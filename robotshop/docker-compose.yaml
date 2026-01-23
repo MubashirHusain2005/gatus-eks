@@ -1,0 +1,194 @@
+version: "3"
+
+services:
+  mongodb:
+    build:
+      context: mongo
+    image: mongo:1.0
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 })' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:6.2-alpine
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.8-management-alpine
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mysql:
+    build:
+      context: ./mysql
+    image: robotshop-mysql:custom
+    container_name: robotshop-mysql
+    environment:
+      MYSQL_DATABASE: cities
+      MYSQL_USER: shipping
+      MYSQL_PASSWORD: secret
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+
+
+
+  catalogue:
+    build:
+      context: catalogue
+    image: catalogue:1.0
+    depends_on:
+      - mongodb
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  user:
+    build:
+      context: user
+    image: user:1.0
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  cart:
+    build:
+      context: cart
+    image: cart:1.0
+    depends_on:
+      - redis
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  shipping:
+    build: shipping
+    image: shipping:2.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: cities
+      MYSQL_USER: shipping
+      MYSQL_PASSWORD: secret
+    networks:
+      - robot-shop
+
+
+
+  ratings:
+    build: ratings
+    image: ratings:1.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: cities
+      MYSQL_USER: shipping
+      MYSQL_PASSWORD: secret
+    networks:
+      - robot-shop
+
+
+
+  payment:
+    build:
+      context: payment
+    image: payment:2.0
+    user: root
+    depends_on:
+      - rabbitmq
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  dispatch:
+    build:
+      context: dispatch
+    image: dispatch:1.0
+    depends_on:
+      - rabbitmq
+    networks:
+      - robot-shop
+
+  web:
+    build:
+      context: web
+    image: web:1.0
+    depends_on:
+      - catalogue
+      - user
+      - cart
+      - shipping
+      - payment
+      - ratings
+    ports:
+      - "8080:8080"
+    networks:
+      - robot-shop
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+     
+
+networks:
+  robot-shop:
+
+volumes:
+  mysql-data:
+

@@ -22,6 +22,8 @@ terraform {
   }
 }
 
+
+
 resource "helm_release" "cert_manager" {
   name       = "cert-manager"
   repository = "https://charts.jetstack.io"
@@ -41,9 +43,6 @@ resource "helm_release" "cert_manager" {
 
   depends_on = [var.cluster_endpoint]
 }
-
-
-
 
 
 #3  Cluster_issuer yaml file

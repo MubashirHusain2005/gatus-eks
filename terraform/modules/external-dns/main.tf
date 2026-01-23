@@ -21,6 +21,10 @@ terraform {
   }
 }
 
+
+
+
+
 resource "kubectl_manifest" "external_dns_namespace" {
   yaml_body = <<EOF
 apiVersion: v1
@@ -29,21 +33,6 @@ metadata:
   name: external-dns
 EOF
 }
-
-
-
-resource "kubernetes_service_account_v1" "external_dns" {
-  metadata {
-    name      = "external-dns"
-    namespace = "external-dns"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
-    }
-  }
-  depends_on = [kubectl_manifest.external_dns_namespace]
-}
-
-
 
 resource "aws_iam_role" "external_dns" {
   name = "iam-dns"
@@ -94,6 +83,21 @@ resource "aws_iam_role_policy" "external_dns_route53" {
     ]
   })
 }
+
+
+resource "kubernetes_service_account_v1" "external_dns" {
+  metadata {
+    name      = "external-dns"
+    namespace = "external-dns"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.external_dns.arn
+    }
+  }
+  depends_on = [kubectl_manifest.external_dns_namespace]
+}
+
+
+
 
 resource "helm_release" "external_dns" {
   name             = "external-dns"

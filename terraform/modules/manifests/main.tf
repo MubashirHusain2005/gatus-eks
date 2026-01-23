@@ -19,18 +19,34 @@ terraform {
   }
 }
 
-resource "kubectl_manifest" "namespace" {
+
+
+
+############################################
+# NAMESPACES
+############################################
+resource "kubectl_manifest" "apps_namespace" {
   yaml_body = <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
   name: app-space
 EOF
-
 }
 
+resource "kubectl_manifest" "db_namespace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-space
+EOF
+}
 
-resource "kubectl_manifest" "resource_quota" {
+############################################
+# RESOURCE QUOTAS
+############################################
+resource "kubectl_manifest" "resource_quota_appspace" {
   yaml_body = <<EOF
 apiVersion: v1
 kind: ResourceQuota
@@ -39,56 +55,836 @@ metadata:
   namespace: app-space
 spec:
   hard:
-   
-    requests.cpu: "2"          
-    requests.memory: 2Gi        
-    limits.cpu: "4"             
-    limits.memory: 4Gi          
-
-    
-    pods: "20"                  
-    services: "5"               
+    requests.cpu: "4"
+    requests.memory: "4Gi"
+    limits.cpu: "8"
+    limits.memory: "8Gi"
+    pods: "30"
 EOF
 
-  depends_on = [kubectl_manifest.namespace]
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "resource_quota_dataspace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: data-quota
+  namespace: data-space
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+    pods: "15"
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+############################################
+# STORAGE CLASSES
+############################################
+resource "kubectl_manifest" "mongo_storageclass" {
+  yaml_body = <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mongo-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  
+EOF
+}
+
+resource "kubectl_manifest" "mysql_storageclass" {
+  yaml_body = <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mysql-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  
+EOF
+}
+
+resource "kubectl_manifest" "storageclass_redis" {
+  yaml_body = <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: redis-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+  
+EOF
+}
+
+############################################
+# SECRETS / CONFIGMAPS   
+############################################
+resource "kubectl_manifest" "mysql_secret" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: data-space    
+type: Opaque
+stringData:
+  root-password: rootpass123
+  user-password: shippingpass123
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+resource "kubectl_manifest" "redis_configmap" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: data-space
+data:
+  redis.conf: |
+    appendonly yes
+    appendfsync everysec
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+############################################
+# DATA-SPACE SERVICES (separate)
+############################################
+resource "kubectl_manifest" "mongo_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: data-space
+spec:
+  type: ClusterIP
+  selector:
+    app: mongo
+  ports:
+  - port: 27017
+    targetPort: 27017
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+resource "kubectl_manifest" "mysql_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: data-space
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+resource "kubectl_manifest" "redis_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: data-space
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+EOF
+
+  depends_on = [kubectl_manifest.db_namespace]
+}
+
+resource "kubectl_manifest" "rabbitmq_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: data-space
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+EOF
 }
 
 
-resource "kubectl_manifest" "deployment" {
 
+
+############################################
+# DATA-SPACE STATEFULSETS / DEPLOYMENTS
+############################################
+resource "kubectl_manifest" "mongo_statefulset" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: data-space
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+      - name: mongo
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mongo:v1
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongo-data
+          mountPath: /data/db
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: mongo-gp3
+      resources:
+        requests:
+          storage: 5Gi
+EOF
+
+  depends_on = [
+    kubectl_manifest.mongo_service,
+    kubectl_manifest.mongo_storageclass,
+    kubectl_manifest.resource_quota_dataspace
+  ]
+}
+
+resource "kubectl_manifest" "mysql_statefulset" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: data-space
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        ports:
+        - containerPort: 3306
+          name: mysql
+        env:
+        - name: MYSQL_DATABASE
+          value: cities
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: root-password
+        - name: MYSQL_USER
+          value: shipping
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: user-password
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        readinessProbe:
+          exec:
+            command: ["sh","-c","mysqladmin ping -h 127.0.0.1 --silent"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: mysql-gp3
+      resources:
+        requests:
+          storage: 5Gi
+EOF
+
+  depends_on = [
+    kubectl_manifest.mysql_secret,
+    kubectl_manifest.mysql_storageclass,
+    kubectl_manifest.resource_quota_dataspace
+  ]
+}
+
+resource "kubectl_manifest" "redis_statefulset" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: data-space
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: workload
+                operator: In
+                values:
+                - database
+      containers:
+      - name: redis
+        image: redis:6.2-alpine
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: redis-gp3
+      resources:
+        requests:
+          storage: 10Gi
+EOF
+
+  depends_on = [
+    kubectl_manifest.redis_service,
+    kubectl_manifest.storageclass_redis,
+    kubectl_manifest.redis_configmap,
+    kubectl_manifest.resource_quota_dataspace
+  ]
+}
+
+resource "kubectl_manifest" "rabbitmq_deployment" {
   yaml_body = <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app
-  namespace: app-space
-  labels:
-    app: my-app
+  name: rabbitmq
+  namespace: data-space
 spec:
-  replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  replicas: 1
   selector:
     matchLabels:
-      app: my-app
+      app: rabbitmq
   template:
     metadata:
       labels:
-        app: my-app
+        app: rabbitmq
     spec:
-      topologySpreadConstraints:
-      - maxSkew: 1
-        topologyKey: topology.kubernetes.io/zone
-        whenUnsatisfiable: ScheduleAnyway
-        labelSelector:
-          matchLabels:
-            app: my-app
       containers:
-      - name: gatusapp
-        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/ecr_repo
+      - name: rabbitmq
+        image: rabbitmq:3.8-management-alpine
+        ports:
+        - containerPort: 5672
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+EOF
+
+  depends_on = [
+    kubectl_manifest.rabbitmq_service,
+    kubectl_manifest.resource_quota_dataspace
+  ]
+}
+
+############################################
+# APP-SPACE SERVICES (separate)
+############################################
+resource "kubectl_manifest" "cart_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart
+  namespace: app-space
+spec:
+  selector:
+    app: cart
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "catalogue_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalogue
+  namespace: app-space
+spec:
+  selector:
+    app: catalogue
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "dispatch_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: dispatch
+  namespace: app-space
+spec:
+  selector:
+    app: dispatch
+  ports:
+  - port: 80
+    targetPort: 80
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "payment_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  namespace: app-space
+spec:
+  selector:
+    app: robotshop-payment
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "ratings_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: ratings
+  namespace: app-space
+spec:
+  selector:
+    app: robotshop-ratings
+  ports:
+  - port: 80
+    targetPort: 80
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "shipping_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipping
+  namespace: app-space
+spec:
+  selector:
+    app: shipping
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+}
+
+
+
+resource "kubectl_manifest" "user_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: user
+  namespace: app-space
+spec:
+  selector:
+    app: user
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+resource "kubectl_manifest" "web_service" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: app-space
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 8080
+    targetPort: 8080
+EOF
+
+  depends_on = [kubectl_manifest.apps_namespace]
+}
+
+############################################
+# APP-SPACE DEPLOYMENTS (separate)
+############################################
+resource "kubectl_manifest" "deployment_cart" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-cart
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart
+  template:
+    metadata:
+      labels:
+        app: cart
+    spec:
+      containers:
+      - name: robot-app-cart
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/cart:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: REDIS_HOST
+          value: redis.data-space.svc.cluster.local
+        - name: CATLOGUE_HOST
+          value: robotshop-catalogue.app-space.svc.cluster.locl
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+EOF
+
+  depends_on = [
+    kubectl_manifest.cart_service,
+    kubectl_manifest.resource_quota_appspace
+  ]
+}
+
+resource "kubectl_manifest" "deployment_catalogue" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-catalogue
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalogue
+  template:
+    metadata:
+      labels:
+        app: catalogue
+    spec:
+      containers:
+      - name: robot-app-catalogue
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/catalogue:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MONGO_URL
+          value: mongodb://mongo.data-space.svc.cluster.local:27017/catalogue
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+EOF
+
+  depends_on = [
+    kubectl_manifest.catalogue_service,
+    kubectl_manifest.resource_quota_appspace
+  ]
+}
+
+resource "kubectl_manifest" "deployment_dispatch" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-dispatch
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dispatch
+  template:
+    metadata:
+      labels:
+        app: dispatch
+    spec:
+      containers:
+      - name: robot-app-dispatch
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/dispatch:v1
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+EOF
+
+  depends_on = [
+    kubectl_manifest.dispatch_service,
+    kubectl_manifest.resource_quota_appspace
+  ]
+}
+
+resource "kubectl_manifest" "deployment_payment" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-payment
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: robotshop-payment
+  template:
+    metadata:
+      labels:
+        app: robotshop-payment
+    spec:
+      containers:
+      - name: robot-app-payment
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/payment:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+EOF
+
+  depends_on = [
+    kubectl_manifest.payment_service,
+    kubectl_manifest.resource_quota_appspace
+  ]
+}
+
+resource "kubectl_manifest" "deployment_ratings" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-ratings
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: robotshop-ratings
+  template:
+    metadata:
+      labels:
+        app: robotshop-ratings
+    spec:
+      containers:
+      - name: robot-app-ratings
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/ratings:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+EOF
+
+  depends_on = [
+    kubectl_manifest.ratings_service,
+    kubectl_manifest.resource_quota_appspace
+  ]
+}
+
+
+resource "kubectl_manifest" "deployment_user" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-user
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user
+  template:
+    metadata:
+      labels:
+        app: user
+    spec:
+      containers:
+      - name: robot-app-user
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/user:v1
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -102,101 +898,73 @@ spec:
 EOF
 
   depends_on = [
-    kubectl_manifest.resource_quota
+    kubectl_manifest.user_service,
+    kubectl_manifest.resource_quota_appspace
   ]
-
 }
 
-
-
-resource "kubectl_manifest" "HorizontalPodAutoscaler" {
+resource "kubectl_manifest" "deployment_web" {
   yaml_body = <<EOF
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: go-app-hpa
+  name: web
   namespace: app-space
-  labels:
-    app: my-app
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: my-app
-
-  minReplicas: 2
-  maxReplicas: 10  
-
- 
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70  
-  
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 0   
-      policies:
-        - type: Percent
-          value: 100                  
-          periodSeconds: 15
-        - type: Pods
-          value: 4                    
-          periodSeconds: 15
-      selectPolicy: Max                
-
-    scaleDown:
-      stabilizationWindowSeconds: 300 
-      policies:
-        - type: Percent
-          value: 50                   
-          periodSeconds: 60
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: robot-app-web
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/web:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "60Mi"
+          limits:
+            cpu: "200m"
+            memory: "100Mi"
 EOF
+
+
 
   depends_on = [
-    kubectl_manifest.deployment
+    kubectl_manifest.web_service,
+    kubectl_manifest.resource_quota_appspace,
+    kubectl_manifest.mysql_statefulset
+
   ]
 }
 
-resource "kubectl_manifest" "service" {
-  yaml_body = <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: service-gatus-app
-  namespace: app-space
-spec:
-  selector:
-    app: my-app
-  ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 8080
-EOF
 
-}
-
+# INGRESS
 
 resource "kubectl_manifest" "ingress" {
   yaml_body = <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: my-ingress
+  name: robotshop-ingress
   namespace: app-space
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
     external-dns.alpha.kubernetes.io/hostname: mubashir.site
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx
   tls:
-  - hosts:
-      - mubashir.site
-    secretName: mubashir-site-tls
+    - hosts:
+        - mubashir.site
+      secretName: mubashir-site-tls
   rules:
     - host: mubashir.site
       http:
@@ -205,18 +973,135 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: service-gatus-app
+                name: web
                 port:
-                  number: 80
+                  number: 8080
+
+          - path: /cart
+            pathType: Prefix
+            backend:
+              service:
+                name: cart
+                port:
+                  number: 8080
+
+          - path: /shipping
+            pathType: Prefix
+            backend:
+              service:
+                name: shipping
+                port:
+                  number: 8080
+          
+          - path: /payment
+            pathType: Prefix
+            backend:
+              service:
+                name: payment
+                port:
+                  number: 8080
+
 EOF
 
   depends_on = [
-    kubectl_manifest.deployment,
+    kubectl_manifest.apps_namespace,
+    kubectl_manifest.web_service
   ]
 }
 
 
 
-####On favorites tab on google there is actually a demonstration to show
-###how HPA works
-##Karpenter scales nodes not pods
+
+###Shipping 
+
+resource "kubectl_manifest" "deployment_shipping" {
+  yaml_body = <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robotshop-shipping
+  namespace: app-space
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shipping
+  template:
+    metadata:
+      labels:
+        app: shipping
+    spec:
+      containers:
+      - name: robot-app-shipping
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
+        imagePullPolicy: Always
+        env:
+        - name: MYSQL_HOST
+          value: mysql.data-space.svc.cluster.local
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_USER
+          value: shipping
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: user-password
+        - name: MYSQL_DATABASE
+          value: cities
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "512Mi"
+          limits:
+            cpu: "200m"
+            memory: "1Gi"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          failureThreshold: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 20
+
+EOF
+
+  depends_on = [
+    kubectl_manifest.mysql_statefulset,
+    kubectl_manifest.rabbitmq_deployment
+  ]
+}
+
+
+
+resource "kubectl_manifest" "mysql_secret_appspace" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: app-space
+type: Opaque
+stringData:
+  user-password: shippingpass123
+
+EOF
+  depends_on = [
+    kubectl_manifest.apps_namespace
+  ]
+
+}
+

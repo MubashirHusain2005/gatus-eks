@@ -94,12 +94,12 @@ resource "aws_eks_addon" "kube-proxy" {
 
 }
 
-resource "aws_eks_addon" "metrics_server" {
-  cluster_name                = aws_eks_cluster.eks_cluster.name
-  addon_name                  = "metrics-server"
-  resolve_conflicts_on_update = "OVERWRITE"
+#resource "aws_eks_addon" "metrics_server" {
+#cluster_name                = aws_eks_cluster.eks_cluster.name
+#addon_name                  = "metrics-server"
+# resolve_conflicts_on_update = "OVERWRITE"
 
-}
+#}
 
 ##EBS CSI Driver 
 
@@ -131,8 +131,15 @@ resource "aws_iam_role_policy_attachment" "storage" {
   role       = aws_iam_role.ebs_csi-driver.name
 }
 
-
-
+resource "kubernetes_service_account_v1" "ebs_csi_driver" {
+  metadata {
+    name      = "ebs-csi-driver"
+    namespace = "ebs-csi-driver"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.ebs_csi-driver.arn
+    }
+  }
+}
 resource "aws_eks_addon" "csi-driver" {
   cluster_name                = aws_eks_cluster.eks_cluster.name
   addon_name                  = "aws-ebs-csi-driver"
@@ -144,18 +151,19 @@ resource "aws_eks_addon" "csi-driver" {
 
   depends_on = [aws_eks_cluster.eks_cluster,
     aws_iam_openid_connect_provider.eks,
-    aws_eks_node_group.private-nodes
+    aws_eks_node_group.private_node_1,
+    aws_eks_node_group.private_node_2
 
   ]
 
 }
 
 
-##Node Group
-resource "aws_eks_node_group" "private-nodes" {
+##Node Group 1
+resource "aws_eks_node_group" "private_node_1" {
   cluster_name    = aws_eks_cluster.eks_cluster.name
   node_role_arn   = var.nodegroup_role_arn
-  node_group_name = "eks-node-group"
+  node_group_name = "eks-node-group-1"
 
   subnet_ids = [
     var.priv_subnet2a_id,
@@ -167,9 +175,14 @@ resource "aws_eks_node_group" "private-nodes" {
 
   scaling_config {
     desired_size = 2
-    max_size     = 2
+    max_size     = 3
     min_size     = 1
   }
+
+  labels = {
+    workload = "apps" ##Label for  Node affinity
+  }
+
 
   update_config {
     max_unavailable = 1
@@ -185,3 +198,49 @@ resource "aws_eks_node_group" "private-nodes" {
   depends_on = [var.nodegroup_role_arn]
 
 }
+
+##Node Group 2
+resource "aws_eks_node_group" "private_node_2" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_role_arn   = var.nodegroup_role_arn
+  node_group_name = "eks-node-group-2"
+
+  subnet_ids = [
+    var.priv_subnet2a_id,
+    var.priv_subnet2b_id
+  ]
+
+  capacity_type  = "ON_DEMAND"
+  instance_types = ["t3.medium"]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
+
+  labels = {
+    workload = "database"
+    app      = "blue" ##Label for Node affinity
+  }
+
+
+
+  update_config {
+    max_unavailable = 1
+  }
+
+
+  tags = {
+    "kubernetes.io/cluster/${aws_eks_cluster.eks_cluster.name}" = "owned"
+  }
+
+
+
+  depends_on = [var.nodegroup_role_arn]
+
+}
+
+
+
+ 

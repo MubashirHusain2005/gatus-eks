@@ -7,4 +7,9 @@ variable "letsencrypt_staging_name" {
 }
 
 
+variable "kms_key_arn" {
+  type = string
+}
+
+
 

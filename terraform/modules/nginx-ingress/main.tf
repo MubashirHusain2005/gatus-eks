@@ -21,6 +21,8 @@ terraform {
   }
 }
 
+
+
 ## nginx-ingress controller
 
 resource "helm_release" "nginx_ingress" {

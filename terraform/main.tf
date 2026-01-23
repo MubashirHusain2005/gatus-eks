@@ -2,20 +2,6 @@ data "aws_eks_cluster_auth" "cluster_auth" {
   name = module.eks.cluster_name
 }
 
-provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_ca)
-  token                  = data.aws_eks_cluster_auth.cluster_auth.token
-}
-
-provider "kubectl" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_ca)
-  token                  = data.aws_eks_cluster_auth.cluster_auth.token
-  load_config_file       = false
-}
-
-provider "helm" {}
 
 
 module "vpc" {
@@ -28,6 +14,8 @@ module "vpc" {
 module "iam" {
   source = "./modules/iam"
 }
+
+
 
 
 module "eks" {
@@ -77,6 +65,7 @@ module "manifests" {
   source                   = "./modules/manifests"
   cluster_endpoint         = module.eks.cluster_endpoint
   letsencrypt_staging_name = module.cert-manager.letsencrypt_staging_name
+  kms_key_arn              = module.vpc.kms_key_arn
 
 
   depends_on = [

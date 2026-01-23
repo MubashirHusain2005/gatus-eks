@@ -313,9 +313,9 @@ resource "aws_iam_role_policy_attachment" "ecr_policy" {
 }
 
 
-#ECR to store my Docker image
-resource "aws_ecr_repository" "ecr_repo" {
-  name                 = var.name
+#ECR to store my Cart Docker image
+resource "aws_ecr_repository" "cart" {
+  name                 = var.cart
   image_tag_mutability = var.image_tag_mutability
 
   # Scan images for vulnerabilities on push
@@ -332,18 +332,18 @@ resource "aws_ecr_repository" "ecr_repo" {
 
 ##ECR lifecycle policy to clean up old images to save on storage costs
 
-resource "aws_ecr_lifecycle_policy" "ecr_policy" {
-  repository = aws_ecr_repository.ecr_repo.name
+resource "aws_ecr_lifecycle_policy" "ecr_policy_cart" {
+  repository = aws_ecr_repository.cart.name
 
   policy = jsonencode({
     rules = [
       {
         rulePriority = 1
-        description  = "Keep only 10 most recent images"
+        description  = "Keep only 12 most recent images"
         selection = {
           tagStatus   = "any"
           countType   = "imageCountMoreThan"
-          countNumber = 10
+          countNumber = 12
         }
         action = {
           type = "expire"
@@ -354,4 +354,451 @@ resource "aws_ecr_lifecycle_policy" "ecr_policy" {
 }
 
 
+#ECR to store my catalogue Docker image
+resource "aws_ecr_repository" "catalogue" {
+  name                 = var.catalogue
+  image_tag_mutability = var.image_tag_mutability
 
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_catalogue" {
+  repository = aws_ecr_repository.catalogue.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my dispatch Docker image
+resource "aws_ecr_repository" "dispatch" {
+  name                 = var.dispatch
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_dispatch" {
+  repository = aws_ecr_repository.dispatch.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my fluentd Docker image
+resource "aws_ecr_repository" "fluentd" {
+  name                 = var.fluentd
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_fluentd" {
+  repository = aws_ecr_repository.fluentd.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my load-gen Docker image
+resource "aws_ecr_repository" "loadgen" {
+  name                 = var.loadgen
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_loadgen" {
+  repository = aws_ecr_repository.loadgen.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my mongo Docker image
+resource "aws_ecr_repository" "mongo" {
+  name                 = var.mongo
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_mongo" {
+  repository = aws_ecr_repository.mongo.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my mysql Docker image
+resource "aws_ecr_repository" "mysql" {
+  name                 = var.mysql
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_mysql" {
+  repository = aws_ecr_repository.mysql.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my payment Docker image
+resource "aws_ecr_repository" "payment" {
+  name                 = var.payment
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_payment" {
+  repository = aws_ecr_repository.payment.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my ratings Docker image
+resource "aws_ecr_repository" "ratings" {
+  name                 = var.ratings
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_ratings" {
+  repository = aws_ecr_repository.ratings.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+#ECR to store my shipping Docker image
+resource "aws_ecr_repository" "shipping" {
+  name                 = var.shipping
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_shipping" {
+  repository = aws_ecr_repository.shipping.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my user Docker image
+resource "aws_ecr_repository" "user" {
+  name                 = var.user
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_user" {
+  repository = aws_ecr_repository.user.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+
+#ECR to store my web Docker image
+resource "aws_ecr_repository" "web" {
+  name                 = var.web
+  image_tag_mutability = var.image_tag_mutability
+
+  # Scan images for vulnerabilities on push
+  image_scanning_configuration {
+    scan_on_push = var.scan_on_push
+  }
+
+  # Encryption at rest
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+}
+
+##ECR lifecycle policy to clean up old images to save on storage costs
+
+resource "aws_ecr_lifecycle_policy" "ecr_policy_web" {
+  repository = aws_ecr_repository.web.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only 12 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 12
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
