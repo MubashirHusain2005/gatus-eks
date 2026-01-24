@@ -1,9 +1,11 @@
 FROM mysql:5.7
 
-ENV MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+
+ENV MYSQL_ROOT_PASSWORD=rootpass \
     MYSQL_DATABASE=cities \
     MYSQL_USER=shipping \
     MYSQL_PASSWORD=secret
+    
 
 # Copy init scripts only (run at container startup, not build time)
 COPY scripts/ /docker-entrypoint-initdb.d/

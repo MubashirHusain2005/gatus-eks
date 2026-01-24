@@ -1,0 +1,72 @@
+resource "kubectl_manifest" "ingress" {
+  yaml_body = <<EOF
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: robotshop-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mubashir.site
+      secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          # APIs FIRST (CRITICAL)
+          - path: /api/cart(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: cart
+                port:
+                  number: 8080
+
+          - path: /api/catalogue(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: catalogue
+                port:
+                  number: 8080
+
+          - path: /api/user(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: user
+                port:
+                  number: 8080
+
+          - path: /api/shipping(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: shipping
+                port:
+                  number: 8080
+
+          - path: /api/payment(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: payment
+                port:
+                  number: 8080
+
+          # FRONTEND LAST
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080

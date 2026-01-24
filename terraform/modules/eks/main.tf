@@ -134,7 +134,7 @@ resource "aws_iam_role_policy_attachment" "storage" {
 resource "kubernetes_service_account_v1" "ebs_csi_driver" {
   metadata {
     name      = "ebs-csi-driver"
-    namespace = "ebs-csi-driver"
+    namespace = "kube-system"
     annotations = {
       "eks.amazonaws.com/role-arn" = aws_iam_role.ebs_csi-driver.arn
     }

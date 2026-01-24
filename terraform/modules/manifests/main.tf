@@ -141,11 +141,11 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: mysql-secret
-  namespace: data-space    
+  namespace: app-space    
 type: Opaque
 stringData:
-  root-password: rootpass123
-  user-password: shippingpass123
+  root-password: rootpass
+  user-password: secret
 EOF
 
   depends_on = [kubectl_manifest.db_namespace]
@@ -195,9 +195,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mysql
-  namespace: data-space
+  namespace: app-space
 spec:
-  clusterIP: None
   selector:
     app: mysql
   ports:
@@ -317,7 +316,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mysql
-  namespace: data-space
+  namespace: app-space
 spec:
   serviceName: mysql
   replicas: 1
@@ -331,7 +330,7 @@ spec:
     spec:
       containers:
       - name: mysql
-        image: mysql:8.0
+        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v2
         ports:
         - containerPort: 3306
           name: mysql
@@ -359,7 +358,7 @@ spec:
             memory: "512Mi"
         volumeMounts:
         - name: mysql-data
-          mountPath: /var/lib/mysql
+          mountPath: /var/lib/mysql/data
         readinessProbe:
           exec:
             command: ["sh","-c","mysqladmin ping -h 127.0.0.1 --silent"]
@@ -547,7 +546,7 @@ metadata:
   namespace: app-space
 spec:
   selector:
-    app: robotshop-payment
+    app: robotshop-payment 
   ports:
   - port: 8080
     targetPort: 8080
@@ -659,7 +658,7 @@ spec:
         - name: REDIS_HOST
           value: redis.data-space.svc.cluster.local
         - name: CATLOGUE_HOST
-          value: robotshop-catalogue.app-space.svc.cluster.locl
+          value: robotshop-catalogue.app-space.svc.cluster.local
         resources:
           requests:
             cpu: "100m"
@@ -946,72 +945,6 @@ EOF
 }
 
 
-# INGRESS
-
-resource "kubectl_manifest" "ingress" {
-  yaml_body = <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: robotshop-ingress
-  namespace: app-space
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    external-dns.alpha.kubernetes.io/hostname: mubashir.site
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - mubashir.site
-      secretName: mubashir-site-tls
-  rules:
-    - host: mubashir.site
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web
-                port:
-                  number: 8080
-
-          - path: /cart
-            pathType: Prefix
-            backend:
-              service:
-                name: cart
-                port:
-                  number: 8080
-
-          - path: /shipping
-            pathType: Prefix
-            backend:
-              service:
-                name: shipping
-                port:
-                  number: 8080
-          
-          - path: /payment
-            pathType: Prefix
-            backend:
-              service:
-                name: payment
-                port:
-                  number: 8080
-
-EOF
-
-  depends_on = [
-    kubectl_manifest.apps_namespace,
-    kubectl_manifest.web_service
-  ]
-}
-
-
-
-
 ###Shipping 
 
 resource "kubectl_manifest" "deployment_shipping" {
@@ -1032,76 +965,96 @@ spec:
         app: shipping
     spec:
       containers:
-      - name: robot-app-shipping
-        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
-        imagePullPolicy: Always
-        env:
-        - name: MYSQL_HOST
-          value: mysql.data-space.svc.cluster.local
-        - name: MYSQL_PORT
-          value: "3306"
-        - name: MYSQL_USER
-          value: shipping
-        - name: MYSQL_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mysql-secret
-              key: user-password
-        - name: MYSQL_DATABASE
-          value: cities
-        ports:
-        - containerPort: 8080
-        resources:
-          requests:
-            cpu: "100m"
-            memory: "512Mi"
-          limits:
-            cpu: "200m"
-            memory: "1Gi"
-        startupProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          failureThreshold: 60
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 90
-          periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 120
-          periodSeconds: 20
+        - name: robot-app-shipping
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v3
+          imagePullPolicy: Always
+
+          env:
+            - name: DB_HOST
+              value: mysql
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: shipping
+            - name: DB_PASSWORD
+              value: secret
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 18
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            failureThreshold: 3
 
 EOF
 
   depends_on = [
     kubectl_manifest.mysql_statefulset,
-    kubectl_manifest.rabbitmq_deployment
   ]
 }
 
 
 
-resource "kubectl_manifest" "mysql_secret_appspace" {
+# INGRESS resource 
+resource "kubectl_manifest" "ingress" {
   yaml_body = <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mysql-secret
-  namespace: app-space
-type: Opaque
-stringData:
-  user-password: shippingpass123
 
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: robotshop-ingress
+  namespace: app-space
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mubashir.site
+      secretName: mubashir-site-tls
+  rules:
+    - host: mubashir.site
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080
 EOF
-  depends_on = [
-    kubectl_manifest.apps_namespace
-  ]
+
+depends_on = [ kubectl_manifest.apps_namespace, kubectl_manifest.web_service ] 
 
 }
 
