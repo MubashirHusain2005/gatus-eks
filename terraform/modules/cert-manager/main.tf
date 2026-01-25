@@ -68,26 +68,26 @@ EOF
     helm_release.cert_manager
   ]
 }
+##For time being
+#resource "kubectl_manifest" "letsencrypt_prod" {
+  #yaml_body = <<EOF
+#apiVersion: cert-manager.io/v1
+#kind: ClusterIssuer
+#metadata:
+ # name: letsencrypt-prod
+#spec:
+  #acme:
+   # server:  https://acme-v02.api.letsencrypt.org/directory
+   # email: stokemubashir@gmail.com
+   # privateKeySecretRef:
+    #  name: letsencrypt-nginx-cert
+    #solvers:
+   # - http01:
+     #   ingress:
+       #   class: nginx
+#EOF
 
-resource "kubectl_manifest" "letsencrypt_prod" {
-  yaml_body = <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server:  https://acme-v02.api.letsencrypt.org/directory
-    email: stokemubashir@gmail.com
-    privateKeySecretRef:
-      name: letsencrypt-nginx-cert
-    solvers:
-    - http01:
-        ingress:
-          class: nginx
-EOF
-
-  depends_on = [
-    helm_release.cert_manager
-  ]
-}
+ # depends_on = [
+   # helm_release.cert_manager
+ # ]
+#}

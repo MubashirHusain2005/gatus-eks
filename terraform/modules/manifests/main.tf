@@ -329,52 +329,63 @@ spec:
         app: mysql
     spec:
       containers:
-      - name: mysql
-        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v2
-        ports:
-        - containerPort: 3306
-          name: mysql
-        env:
-        - name: MYSQL_DATABASE
-          value: cities
-        - name: MYSQL_ROOT_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mysql-secret
-              key: root-password
-        - name: MYSQL_USER
-          value: shipping
-        - name: MYSQL_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mysql-secret
-              key: user-password
+        - name: mysql
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v3
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_DATABASE
+              value: cities
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: root-password
+            - name: MYSQL_USER
+              value: shipping
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: user-password
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+              subPath: mysql
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  mysqladmin ping \
+                    -h 127.0.0.1 \
+                    -u root \
+                    -p"$MYSQL_ROOT_PASSWORD" \
+                    --silent
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: mysql-gp3
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-        volumeMounts:
-        - name: mysql-data
-          mountPath: /var/lib/mysql/data
-        readinessProbe:
-          exec:
-            command: ["sh","-c","mysqladmin ping -h 127.0.0.1 --silent"]
-          initialDelaySeconds: 30
-          periodSeconds: 10
-  volumeClaimTemplates:
-  - metadata:
-      name: mysql-data
-    spec:
-      accessModes:
-      - ReadWriteOnce
-      storageClassName: mysql-gp3
-      resources:
-        requests:
-          storage: 5Gi
+            storage: 5Gi
 EOF
+
 
   depends_on = [
     kubectl_manifest.mysql_secret,
@@ -465,6 +476,13 @@ spec:
         image: rabbitmq:3.8-management-alpine
         ports:
         - containerPort: 5672
+        env:
+          - name: RABBITMQ_DEFAULT_USER
+            value: guest
+          - name: RABBITMQ_DEFAULT_PASS
+            value: guest
+          - name: RABBITMQ_ALLOW_GUEST
+            value: "true"
         resources:
           requests:
             cpu: "100m"
@@ -657,8 +675,12 @@ spec:
         env:
         - name: REDIS_HOST
           value: redis.data-space.svc.cluster.local
-        - name: CATLOGUE_HOST
-          value: robotshop-catalogue.app-space.svc.cluster.local
+        - name: REDIS_PORT
+          value: "6379"
+        - name: CATALOGUE_HOST
+          value: catalogue.app-space.svc.cluster.local
+        - name: INSTANA_DISABLE_AUTP_INSTR
+          value: "true"
         resources:
           requests:
             cpu: "100m"
@@ -798,6 +820,15 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
+        env:
+          - name: AMQP_HOST
+            value: rabbitmq.data-space.svc.cluster.local
+          - name: AMQP_PORT
+            value: "5672"
+          - name: RABBITMQ_PASSWORD
+            value: guest
+          - name: RABBITMQ_USER
+            value: guest
         resources:
           requests:
             cpu: "100m"
@@ -848,6 +879,11 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 80
+        env:
+          - name: MONGO_HOST
+            value: mongo.data-space.svc.cluster.local
+          - name: MONGO_PORT
+            value: "27017"
         resources:
           requests:
             cpu: "100m"
@@ -887,6 +923,13 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
+        env:
+          - name: TRUST_PROXY
+            value: "true"
+          - name: INSTANA_DISABLE_AUTO_INSTR
+            value: "true"
+          - name: REDIS_HOST
+            value: redis.data-space.svc.cluster.local
         resources:
           requests:
             cpu: "100m"
@@ -920,20 +963,45 @@ spec:
         app: web
     spec:
       containers:
-      - name: robot-app-web
-        image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/web:v1
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 8080
-        resources:
-          requests:
-            cpu: "100m"
-            memory: "60Mi"
-          limits:
-            cpu: "200m"
-            memory: "100Mi"
-EOF
+        # ===============================
+        # NGINX FRONT PROXY (SIDE CAR)
+        # ===============================
+        - name: web-nginx
+          image: nginx:1.21.6
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
 
+        # ===============================
+        # EXISTING WEB CONTAINER
+        # ===============================
+        - name: robot-app-web
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/web:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SESSION_SECURE
+              value: "false"
+            - name: SESSION_SAMESITE
+              value: "lax"
+            - name: INSTANA_DISABLE_AUTO_INSTR
+              value: "true"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "60Mi"
+            limits:
+              cpu: "200m"
+              memory: "100Mi"
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: web-nginx-config
+EOF
 
 
   depends_on = [
@@ -1020,21 +1088,18 @@ EOF
 }
 
 
-
-# INGRESS resource 
-resource "kubectl_manifest" "ingress" {
+# RobotShop Web Ingress
+# ================================
+resource "kubectl_manifest" "robotshop_web_ingress" {
   yaml_body = <<EOF
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: robotshop-ingress
+  name: robotshop-web
   namespace: app-space
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
-    external-dns.alpha.kubernetes.io/hostname: mubashir.site
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    nginx.ingress.kubernetes.io/proxy-set-headers: "ingress-nginx/custom-headers"
 spec:
   ingressClassName: nginx
   tls:
@@ -1053,8 +1118,84 @@ spec:
                 port:
                   number: 8080
 EOF
-
-depends_on = [ kubectl_manifest.apps_namespace, kubectl_manifest.web_service ] 
-
 }
+
+
+
+resource "kubectl_manifest" "configmap-https" {
+  yaml_body = <<EOF
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-headers
+  namespace: ingress-nginx
+data:
+  X-Forwarded-Proto: "https"
+
+EOF
+}
+
+
+resource "kubectl_manifest" "robotshop_config" {
+  yaml_body = <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-nginx-config
+  namespace: app-space
+data:
+  default.conf: |
+    server {
+        listen 8080;
+
+        proxy_http_version 1.1;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location ^~ /api/catalogue/ {
+            proxy_pass http://catalogue:8080/;
+        }
+
+        location ^~ /api/user/ {
+            proxy_pass http://user:8080/;
+        }
+
+        location ^~ /api/cart/ {
+            proxy_pass http://cart:8080/;
+        }
+
+        location ^~ /api/shipping/ {
+            rewrite ^/api/shipping/?(.*)$ /$1 break;
+            proxy_pass http://shipping:8080/shipping/;
+        }
+
+        location ^~ /api/payment/ {
+            rewrite ^/api/payment/?(.*)$ /$1 break;
+            proxy_pass http://payment:8080/payment/;
+        }
+
+        location ^~ /api/ratings/ {
+            proxy_pass http://ratings:80/;
+        }
+
+        # ===============================
+        # STATIC FILES
+        # ===============================
+        location /images/ {
+            expires 5s;
+            try_files $uri /images/placeholder.png;
+        }
+
+        # ===============================
+        # ANGULAR HTML5 MODE FIX
+        # ===============================
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+EOF
+}
+
 
