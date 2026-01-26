@@ -195,7 +195,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: mysql
-  namespace: app-space    
+  namespace: app-space     #change to data-space
 spec:
   selector:
     app: mysql
@@ -242,7 +242,6 @@ spec:
       targetPort: 5672
 EOF
 }
-
 
 
 
@@ -316,7 +315,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mysql
-  namespace: app-space   
+  namespace: app-space   #change to data-space
 spec:
   serviceName: mysql
   replicas: 1
@@ -1323,5 +1322,6 @@ data:
     }
 EOF
 }
+
 
 

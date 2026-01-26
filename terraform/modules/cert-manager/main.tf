@@ -24,6 +24,7 @@ terraform {
 
 
 
+
 resource "helm_release" "cert_manager" {
   name       = "cert-manager"
   repository = "https://charts.jetstack.io"
@@ -35,7 +36,7 @@ resource "helm_release" "cert_manager" {
   wait             = true
   timeout          = 600
 
-  set {
+  set  {
     name  = "installCRDs"
     value = "true"
   }
@@ -68,6 +69,7 @@ EOF
     helm_release.cert_manager
   ]
 }
+
 ##For time being
 #resource "kubectl_manifest" "letsencrypt_prod" {
   #yaml_body = <<EOF

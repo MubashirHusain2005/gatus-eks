@@ -1,89 +1,118 @@
-name: Push Docker Image to ECR 
+name: Build Scan and Push Docker Images to ECR
 
 on:
   push:
     branches:
       - master
-
-env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  AWS_CREDENTIALS: ${{ secrets.AWS_CREDENTIALS }}
-  REPOSITORY: ${{ vars.REPOSITORY }}
+    #paths:
+     # - 'robotshop/cart/**'
+      #- 'robotshop/catalogue/**'
+     # - 'robotshop/payment/**'
+     # - 'robotshop/mongo/**'
+     # - 'robotshop/mysql/**'
+      #- 'robotshop/ratings/**'
+     # - 'robotshop/shipping/**'
+     # - 'robotshop/user/**'
+     # - 'robotshop/web/**'
+     # - '.github/workflows/**'
 
 
 permissions:
   id-token: write
   contents: read 
+  security-events: write
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  
 
 jobs:
-  build-and-push:
+  build-scan-push:
     runs-on: ubuntu-latest
+
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - cart
+          - catalogue
+          - payment
+          - mongo
+          - mysql
+          - ratings
+          - shipping
+          - user
+          - web
+          - dispatch
+
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+
+    
 # Configure AWS credentials using OIDC
 
     - name: Configure AWS credentials using OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: ${{ secrets.AWS_CREDENTIALS }}
-        aws-region: ${{ vars.AWS_REGION }}
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
 
 ## Login to ECR
 
     - name: Login to Amazon ECR
       id: login-ecr 
-      uses: aws-actions/amazon-ecr-login@v1
+      uses: aws-actions/amazon-ecr-login@v2
 
 
-## Get commit hash
+## Generate Tag for Docker Images
   
-    - name: Get commit hash
-      id: get-commit-hash
+    - name: Get image tag
+      id: meta
       run: |
-       echo "commit-hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-    - name: Get timestamp
-      id: get-timestamp
-      run: |
-        echo "timestamp=$(date +'%Y-%m-%d-%H-%M')" >> $GITHUB_OUTPUT
-      
+       echo "tag=$(git rev-parse --short HEAD)-$(data + '%Y-%m-%d-%H-%M')" >> $GITHUB_OUTPUT
 
-#Build Docker image 
+#Build Docker images 
 
-    - name: Build Docker Image 
+    - name: Build Docker Images 
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ vars.REPOSITORY }}
-        IMAGE_TAG: ${{ steps.get-commit-hash.outputs.commit-hash }}-${{ steps.get-timestamp.outputs.timestamp }}
+        SERVICE: ${{ matrix.service }}
+        IMAGE_TAG: ${{ steps.meta.outputs.tag }}
       run: |
-        cd app
-        IMAGE_REF="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+        cd robotshop/$SERVICE
+        IMAGE_REF="$ECR_REGISTRY/$SERVICE:$IMAGE_TAG"
         docker build -t $IMAGE_REF .
         echo "image-ref=$IMAGE_REF" >> $GITHUB_OUTPUT
 
-#Running Trivy here to spot vulnerabilities with Docker image
-
-    - name: Run Trivy Vulnerability Scanner
-      uses: aquasecurity/trivy-action@0.31.0
+#Trivy Scan
+    - name: Scan Image with Trivy
+      uses: aquasecurity/trivy-action@0.33.1
       with:
-        image-ref: ${{ steps.build-image.outputs.image-ref }}
-        format: 'table'
-        exit-code: '1'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
+          image-ref: ${{ steps.build-image.outputs.image-ref }}
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
 
-# If Trivy passed, push image!!     
+# Upload image report to GitHub Security
+    - name: Upload Trivy image scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        category: "trivy-${{ matrix.service }}"
+        sarif_file: "trivy-${{ matrix.service }}.sarif"
 
-    - name: Push Docker Image to Amazon ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ vars.REPOSITORY }}
-        IMAGE_TAG: ${{ steps.get-commit-hash.outputs.commit-hash }}-${{ steps.get-timestamp.outputs.timestamp }}
 
-      run: |
+#Push image only if Trivy Scan is successfull   
+
+    -  name: Push Docker Images to Amazon ECR  
+       run: |
          docker push ${{ steps.build-image.outputs.image-ref }}
+
+  

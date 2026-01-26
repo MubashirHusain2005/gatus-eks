@@ -14,7 +14,7 @@ env:
 #Define Jobs
 jobs:
   terraform:
-    name: "Deploy Infra with Terraform on AWS"
+    name: "Deploy Infrastructure with Terraform to Cloud"
     runs-on: ubuntu-latest
 
     permissions:

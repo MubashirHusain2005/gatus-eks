@@ -23,8 +23,6 @@ terraform {
 
 
 
-
-
 resource "kubectl_manifest" "external_dns_namespace" {
   yaml_body = <<EOF
 apiVersion: v1
@@ -56,7 +54,6 @@ resource "aws_iam_role" "external_dns" {
     ]
   })
 }
-
 
 resource "aws_iam_role_policy" "external_dns_route53" {
   name = "external-dns-route53-policy"
