@@ -68,12 +68,22 @@ jobs:
       uses: aws-actions/amazon-ecr-login@v2
 
 
-## Generate Tag for Docker Images
-  
-    - name: Get image tag
-      id: meta
+##Creating an auto incrementing version system
+
+    - name: Auto-increment version
+      id: version
       run: |
-       echo "tag=$(git rev-parse --short HEAD)-$(date + '%Y-%m-%d-%H-%M')" >> $GITHUB_OUTPUT
+        git fetch --tags
+        LAST_TAG=$(git tag --list "v*" --sort=-v:refname | head -n 1 )
+        
+        if [ -z "$LAST_TAG" ]; then
+          NEXT_TAG="v1"
+        else
+          NUM=${LAST_TAG#v}
+          NEXT_TAG="v$((NUM + 1))"
+        fi
+
+        echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
 
 #Build Docker images 
 
@@ -82,7 +92,7 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
-        IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        IMAGE_TAG: ${{ steps.version.outputs.tag }}
       run: |
         cd robotshop/$SERVICE
         IMAGE_REF="$ECR_REGISTRY/$SERVICE:$IMAGE_TAG"
@@ -117,5 +127,14 @@ jobs:
        if: steps.trivy.outcome == 'success'
        run: |
          docker push ${{ steps.build-image.outputs.image-ref }}
+
+
+##Ensure all images use the same version
+
+    - name: Create the Git tag
+      if: steps.trivy.outcome == 'success'
+      run: |
+        git tag ${{ steps.version.outputs.tag }}
+        git push origin ${{ steps.version.outputs.tag }}
 
   
