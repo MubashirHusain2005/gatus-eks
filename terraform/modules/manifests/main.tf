@@ -330,7 +330,7 @@ spec:
     spec:
       containers:
         - name: mysql
-          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v3
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/mysql:v1
           ports:
             - containerPort: 3306
               name: mysql
@@ -816,7 +816,7 @@ spec:
     spec:
       containers:
         - name: robot-app-shipping
-          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v3
+          image: 038774803581.dkr.ecr.eu-west-2.amazonaws.com/shipping:v1
           imagePullPolicy: Always
 
           env:

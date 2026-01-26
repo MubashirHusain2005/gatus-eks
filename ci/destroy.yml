@@ -1,4 +1,4 @@
-name: Intialise Terraform Code and Plan
+name: Destroy Infrastructure
 
 #Workflow Triggers
 on:
@@ -42,6 +42,8 @@ jobs:
     - name: Initialise Terraform
       working-directory: ./terraform
       run: terraform init 
+
+    - name: 
 
     - name: Terraform Destory
       working-directory: ./terraform
