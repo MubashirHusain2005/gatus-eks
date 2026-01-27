@@ -79,13 +79,7 @@ resource "aws_eks_cluster" "eks_cluster" {
   ]
 }
 
-#Kubernetes addons
-resource "aws_eks_addon" "vpc-cni" {
-  cluster_name                = aws_eks_cluster.eks_cluster.name
-  addon_name                  = "vpc-cni"
-  resolve_conflicts_on_update = "OVERWRITE"
-}
-
+#Kubernetes addons which dont require IRSA
 
 resource "aws_eks_addon" "kube-proxy" {
   cluster_name                = aws_eks_cluster.eks_cluster.name
@@ -100,6 +94,10 @@ resource "aws_eks_addon" "metrics_server" {
   resolve_conflicts_on_update = "OVERWRITE"
 
 }
+
+##Kubernetes addons which do require IRSA
+
+
 
 ##EBS CSI Driver 
 
@@ -148,6 +146,65 @@ resource "aws_eks_addon" "csi-driver" {
   configuration_values        = null
   preserve                    = true
   service_account_role_arn    = aws_iam_role.ebs_csi-driver.arn
+
+  depends_on = [aws_eks_cluster.eks_cluster,
+    aws_iam_openid_connect_provider.eks,
+    aws_eks_node_group.private_node_1,
+    aws_eks_node_group.private_node_2
+
+  ]
+
+}
+
+##VPC CNI add-on
+
+resource "aws_iam_role" "vpc-cni" {
+  name = "kube-proxy"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:vpc-cni",
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "vpc-cni-policy" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.vpc-cni.name
+}
+
+
+resource "kubernetes_service_account_v1" "vpc-cni" {
+  metadata {
+    name      = "ebs-csi-driver"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.vpc-cni.arn
+    }
+  }
+}
+
+resource "aws_eks_addon" "vpc-cni" {
+  cluster_name                = aws_eks_cluster.eks_cluster.name
+  addon_name                  = "vpc-cni"
+  resolve_conflicts_on_update = "OVERWRITE"
+  resolve_conflicts_on_create = "OVERWRITE"
+  configuration_values        = null
+  preserve                    = true
+  service_account_role_arn    = aws_iam_role.vpc-cni.arn
 
   depends_on = [aws_eks_cluster.eks_cluster,
     aws_iam_openid_connect_provider.eks,

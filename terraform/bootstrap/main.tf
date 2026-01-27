@@ -2,7 +2,7 @@ provider "aws" {
   region = "eu-west-2"
 }
 
-##S3 Bucket to store state file
+##S3 Bucket to store tf state file
 
 resource "aws_s3_bucket" "terraform_state" {
   bucket = "mhusains3"
@@ -215,7 +215,9 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams",
           "logs:PutRetentionPolicy",
-          "logs:ListTagsForResource"
+          "logs:ListTagsForResource",
+          "logs:DeleteLogGroup",
+          "logs:DeleteRetentionPolicy"
         ]
         Resource = "*"
       },
@@ -234,7 +236,8 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "eks:DescribeCluster",
           "eks:DeleteCluster",
           "eks:CreateNodegroup",
-          "eks:DeleteNodegroup"
+          "eks:DeleteNodegroup",
+          "eks:DescribeNodegroup"
         ]
         Resource = "*"
       },
