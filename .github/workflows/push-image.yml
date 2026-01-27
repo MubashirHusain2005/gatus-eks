@@ -19,8 +19,8 @@ on:
 
 permissions:
   id-token: write
-  contents: read
-  security-events: write
+  contents: write
+
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
