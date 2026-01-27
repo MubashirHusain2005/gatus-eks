@@ -315,7 +315,7 @@ resource "aws_iam_role_policy_attachment" "ecr_policy" {
 }
 
 
-#ECR to store my Cart Docker image
+# ECR to store my Cart Docker image
 resource "aws_ecr_repository" "cart" {
   name                 = var.cart
   image_tag_mutability = var.image_tag_mutability
