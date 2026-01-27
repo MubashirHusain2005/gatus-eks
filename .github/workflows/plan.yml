@@ -14,7 +14,7 @@ env:
 #Define Jobs
 jobs:
   terraform:
-    name: "Deploy Infrastructure with Terraform to Cloud"
+    name: "Deploy Infrastructure to Cloud"
     runs-on: ubuntu-latest
 
     permissions:
@@ -39,7 +39,6 @@ jobs:
       with:
         terraform_version: 1.13.3
 
-    
     
     - name: Terraform init
       working-directory: ./terraform

@@ -1088,130 +1088,101 @@ EOF
 ##Horizontal Pod Autoscaler for web traffic
 resource "kubectl_manifest" "pod_autoscaler_web" {
   yaml_body = <<EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+  namespace: app-space
+  labels:
+    app: web
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
 
-  apiVersion: autoscaling/v2
-  kind: HorizontalPodAutoscaler
-  metadata:
-    name: web-hpa
-    namespace: app-space
-    labels:
-      app: web-hpa
-  spec:
-  # ---------------------------------------------------------------------------
-  # Target Deployment
-  # ---------------------------------------------------------------------------
-    scaleTargetRef:
-      apiVersion: apps/v1
-      kind: Deployment
-      name: web
+  minReplicas: 3
+  maxReplicas: 10
 
-  # ---------------------------------------------------------------------------
-  # Scaling Bounds
-  # ---------------------------------------------------------------------------
-    minReplicas: 3   # Match Part 3 baseline (HA)
-    maxReplicas: 10  # Allow 3x scaling for traffic spikes
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
 
-  # ---------------------------------------------------------------------------
-  # Scaling Metrics
-  # ---------------------------------------------------------------------------
-    metrics:
-    # Scale based on CPU utilization
-     - type: Resource
-        resource:
-         name: cpu
-          target:
-             type: Utilization
-             averageUtilization: 70  # Scale when CPU > 70%
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
 
-  # ---------------------------------------------------------------------------
-  # Scaling Behavior (optional, fine-tuning)
-  # ---------------------------------------------------------------------------
-    behavior:
-      scaleUp:
-        stabilizationWindowSeconds: 0   # Scale up immediately
-        policies:
-          - type: Percent
-            value: 100                   # Double pods if needed
-            periodSeconds: 15
-          - type: Pods
-            value: 4                     # Or add up to 4 pods
-            periodSeconds: 15
-       selectPolicy: Max                # Use whichever adds more pods
-
-      scaleDown:
-       stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
-       policies:
-         - type: Percent
-           value: 50                    # Remove up to 50% of pods
-           periodSeconds: 60
-
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
 EOF
-
 }
+
 
 ##Horizontal Pod Autoscaler for User
 resource "kubectl_manifest" "pod_autoscaler_user" {
   yaml_body = <<EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-hpa
+  namespace: data-space
+  labels:
+    app: user
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user
 
-  apiVersion: autoscaling/v2
-  kind: HorizontalPodAutoscaler
-  metadata:
-    name: user-hpa
-    namespace: data-space
-    labels:
-      app: user-hpa
-  spec:
-  # ---------------------------------------------------------------------------
-  # Target Deployment
-  # ---------------------------------------------------------------------------
-    scaleTargetRef:
-      apiVersion: apps/v1
-      kind: Deployment
-      name: user
+  minReplicas: 3
+  maxReplicas: 10
 
-  # ---------------------------------------------------------------------------
-  # Scaling Bounds
-  # ---------------------------------------------------------------------------
-    minReplicas: 3   # Match Part 3 baseline (HA)
-    maxReplicas: 10  # Allow 3x scaling for traffic spikes
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
 
-  # ---------------------------------------------------------------------------
-  # Scaling Metrics
-  # ---------------------------------------------------------------------------
-    metrics:
-    # Scale based on CPU utilization
-     - type: Resource
-        resource:
-         name: cpu
-          target:
-             type: Utilization
-             averageUtilization: 70  # Scale when CPU > 70%
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
 
-  # ---------------------------------------------------------------------------
-  # Scaling Behavior (optional, fine-tuning)
-  # ---------------------------------------------------------------------------
-    behavior:
-      scaleUp:
-        stabilizationWindowSeconds: 0   # Scale up immediately
-        policies:
-          - type: Percent
-            value: 100                   # Double pods if needed
-            periodSeconds: 15
-          - type: Pods
-            value: 4                     # Or add up to 4 pods
-            periodSeconds: 15
-       selectPolicy: Max                # Use whichever adds more pods
-
-      scaleDown:
-       stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
-       policies:
-         - type: Percent
-           value: 50                    # Remove up to 50% of pods
-           periodSeconds: 60
-
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
 EOF
-
 }
+
+
 
 
 # RobotShop Web Ingress
