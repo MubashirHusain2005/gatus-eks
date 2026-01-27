@@ -237,7 +237,12 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "eks:DeleteCluster",
           "eks:CreateNodegroup",
           "eks:DeleteNodegroup",
-          "eks:DescribeNodegroup"
+          "eks:DescribeNodegroup",
+          "eks:CreateAddon",
+          "eks:DescribeAddon",
+          "eks:ListAddon",
+          "eks:DescribeAddonVersion",
+          "eks:DeleteAddon"
         ]
         Resource = "*"
       },
