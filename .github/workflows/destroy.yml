@@ -10,7 +10,7 @@ on:
 env:
   S3_BUCKET: ${{ secrets.S3_BUCKET }}
   AWS_REGION: ${{ vars.AWS_REGION }}
-  AWS_CREDENTIALS: ${{ secrets.AWS_CREDENTIALS }}
+  AWS_CREDENTIALS: ${{ secrets.AWS_ROLE_ARN }}
  
 
 #Define Jobs
