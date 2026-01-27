@@ -141,7 +141,7 @@ resource "aws_iam_role" "github_oidc_role" {
 resource "aws_iam_policy" "oidc_access_aws" {
   name        = "oidc_access_aws"
   path        = "/"
-  description = "Policy to access AWS resources during CI/CD"
+  description = "Policy document to allow OIDC access to AWS resources during CI/CD"
 
   policy = jsonencode({
     Version = "2012-10-17"
