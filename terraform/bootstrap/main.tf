@@ -214,7 +214,8 @@ resource "aws_iam_policy" "oidc_access_aws" {
           "logs:PutLogEvents",
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams",
-          "logs:PutRetentionPolicy"
+          "logs:PutRetentionPolicy",
+          "logs:ListTagsForResource"
         ]
         Resource = "*"
       },
