@@ -14,7 +14,7 @@ on:
      # - 'robotshop/shipping/**'
      # - 'robotshop/user/**'
      # - 'robotshop/web/**'
-     # - '.github/workflows/**'
+     # -  '.github/workflows/**'
 
 
 permissions:
