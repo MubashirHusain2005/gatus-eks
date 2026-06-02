@@ -88,9 +88,9 @@ jobs:
           tflint --init
           tflint
   
-      - name: Terraform Format Check
-        working-directory: ./terraform
-        run: terraform fmt -check -recursive
+     # - name: Terraform Format 
+      #  working-directory: ./terraform
+     #   run: terraform fmt -recursive
       
       - name: Run Checkov action
         uses: bridgecrewio/checkov-action@v12

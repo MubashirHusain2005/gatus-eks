@@ -221,15 +221,15 @@ module "eso" {
 
 # Cleanup Null Resources
 
-resource "null_resource" "cleanup_script" {
-  provisioner "local-exec" {
-    command = <<EOT
-      aws eks update-kubeconfig --region eu-west-2 --name eks-cluster
-      kubectl delete validatingwebhookconfiguration externalsecret-validate
-    EOT
-    when    = destroy
-  }
-}
+#resource "null_resource" "cleanup_script" {
+  #provisioner "local-exec" {
+   # command = <<EOT
+    #  aws eks update-kubeconfig --region eu-west-2 --name eks-cluster
+    #  kubectl delete validatingwebhookconfiguration externalsecret-validate
+   # EOT
+   # when    = destroy
+  #}
+#}
 
 ###Null resource to update my kubeconfig file when running locally
 
