@@ -54,16 +54,16 @@ variable "node_group_name_2" {
 }
 
 #variable "secrets" {
-  #default = {
-   # DB_USER       = "shipping"
-   # DB_PASSWORD   = "secret"
-   # root-password = "rootpass"
-   # user-password = "secret"
-   # sensitive = true
+#default = {
+# DB_USER       = "shipping"
+# DB_PASSWORD   = "secret"
+# root-password = "rootpass"
+# user-password = "secret"
+# sensitive = true
 
- # }
+# }
 
- # type = map(string)
+# type = map(string)
 #}
 
 

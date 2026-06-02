@@ -251,7 +251,7 @@ resource "aws_eks_node_group" "private_node_2" {
   instance_types = ["t3.large"]
 
   scaling_config {
-    desired_size = 2 
+    desired_size = 2
     max_size     = 3
     min_size     = 1
   }
@@ -347,9 +347,9 @@ resource "aws_security_group_rule" "cluster_ingress_from_nodes" {
   source_security_group_id = aws_security_group.nodes.id
   security_group_id        = aws_security_group.eks-cluster.id
 
-### Nodes → control plane on 443: Nodes need to reach the Kubernetes API server
-##on port 443 to register themselves, report status and recieve instructions
-##Without this nodes cant join the cluster
+  ### Nodes → control plane on 443: Nodes need to reach the Kubernetes API server
+  ##on port 443 to register themselves, report status and recieve instructions
+  ##Without this nodes cant join the cluster
 }
 
 resource "aws_security_group_rule" "node_ingress_from_cluster" {
@@ -361,9 +361,9 @@ resource "aws_security_group_rule" "node_ingress_from_cluster" {
   source_security_group_id = aws_security_group.eks-cluster.id
   security_group_id        = aws_security_group.nodes.id
 
-# Control Plane → nodes on 1025-65535: The API server needs to reach kubelets on the nodes
-#for log streaming, exec into the pods and port forwarding.
-#Kubelet listens on port 10250 and the ephemeral ports used by services fall in the higher range
+  # Control Plane → nodes on 1025-65535: The API server needs to reach kubelets on the nodes
+  #for log streaming, exec into the pods and port forwarding.
+  #Kubelet listens on port 10250 and the ephemeral ports used by services fall in the higher range
 
 }
 
@@ -377,9 +377,9 @@ resource "aws_security_group_rule" "node_ingress_webhook" {
   source_security_group_id = aws_security_group.eks-cluster.id
   security_group_id        = aws_security_group.nodes.id
 
-#Control plane → nodes on 8443.Webhook port.Kubernetes
-#admission controllers and mutating webhooks run on the nodes and listen on 8443.
-#The API server needs to reach them to validate or mutate resources before they are created.
+  #Control plane → nodes on 8443.Webhook port.Kubernetes
+  #admission controllers and mutating webhooks run on the nodes and listen on 8443.
+  #The API server needs to reach them to validate or mutate resources before they are created.
 }
 
 
@@ -393,8 +393,8 @@ resource "aws_security_group_rule" "karpenter_nodes_to_cluster" {
   security_group_id        = aws_eks_cluster.eks_cluster.vpc_config[0].cluster_security_group_id
   description              = "Allow Karpenter nodes to reach EKS API"
 
-##Karpenter nodes → cluster security group on 443.Karpenter runs as a pod
-##on your nodes and needs to talk to the EKS API to provision new  nodes.
-##This rile allows Karpenter specifically to reach the cluster's managed secruity group-seperate from the 
-##custom SG as EKS manages that one internally.
+  ##Karpenter nodes → cluster security group on 443.Karpenter runs as a pod
+  ##on your nodes and needs to talk to the EKS API to provision new  nodes.
+  ##This rile allows Karpenter specifically to reach the cluster's managed secruity group-seperate from the 
+  ##custom SG as EKS manages that one internally.
 }
