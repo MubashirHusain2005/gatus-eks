@@ -103,7 +103,7 @@ module "iam" {
 
 module "vpc" {
   source             = "./modules/vpc"
-  vpc_flow_logs_role = module.iam.vpc_flow_logs_role
+  vpc_flow_logs_role = module.iam.vpc_flow_logs_role 
   depends_on         = [module.iam]
 }
 

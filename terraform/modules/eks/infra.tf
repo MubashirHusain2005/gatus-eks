@@ -41,7 +41,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
 }
 
 
-#EKS 
+#EKS Cluster
 
 resource "aws_eks_cluster" "eks_cluster" {
   name    = var.cluster_name
@@ -278,9 +278,11 @@ resource "aws_eks_node_group" "private_node_2" {
 ##Security Groups
 
 
+##This security group essentially means that the control plane can talk out to anywhere.This is needed because your control plane
+##needs access to worker nodes, webhooks, cluster addons
 resource "aws_security_group" "eks-cluster" {
   name        = "cluster-sg"
-  description = "Controls who can talk to the EKS Control Plane"
+  description = "Controls who the EKS Control Plane can talk to"
   vpc_id      = var.vpc_id
 
   egress {
@@ -323,8 +325,8 @@ resource "aws_security_group" "nodes" {
     description = "Allow SSH traffic from within VPC only"
     from_port   = 22
     to_port     = 22
-    protocol    = "-1"
-    cidr_blocks = "10.0.0.0/16"
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   tags = {
@@ -337,7 +339,7 @@ resource "aws_security_group" "nodes" {
 
 
 resource "aws_security_group_rule" "cluster_ingress_from_nodes" {
-  description              = "Allow nodes to communicate with cluster"
+  description              = "Allow nodes to communicate with k8s API server"
   type                     = "ingress"
   from_port                = 443
   to_port                  = 443
@@ -345,6 +347,9 @@ resource "aws_security_group_rule" "cluster_ingress_from_nodes" {
   source_security_group_id = aws_security_group.nodes.id
   security_group_id        = aws_security_group.eks-cluster.id
 
+### Nodes → control plane on 443: Nodes need to reach the Kubernetes API server
+##on port 443 to register themselves, report status and recieve instructions
+##Without this nodes cant join the cluster
 }
 
 resource "aws_security_group_rule" "node_ingress_from_cluster" {
@@ -355,6 +360,10 @@ resource "aws_security_group_rule" "node_ingress_from_cluster" {
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.eks-cluster.id
   security_group_id        = aws_security_group.nodes.id
+
+# Control Plane → nodes on 1025-65535: The API server needs to reach kubelets on the nodes
+#for log streaming, exec into the pods and port forwarding.
+#Kubelet listens on port 10250 and the ephemeral ports used by services fall in the higher range
 
 }
 
@@ -367,7 +376,12 @@ resource "aws_security_group_rule" "node_ingress_webhook" {
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.eks-cluster.id
   security_group_id        = aws_security_group.nodes.id
+
+#Control plane → nodes on 8443.Webhook port.Kubernetes
+#admission controllers and mutating webhooks run on the nodes and listen on 8443.
+#The API server needs to reach them to validate or mutate resources before they are created.
 }
+
 
 
 resource "aws_security_group_rule" "karpenter_nodes_to_cluster" {
@@ -378,4 +392,9 @@ resource "aws_security_group_rule" "karpenter_nodes_to_cluster" {
   source_security_group_id = aws_security_group.nodes.id
   security_group_id        = aws_eks_cluster.eks_cluster.vpc_config[0].cluster_security_group_id
   description              = "Allow Karpenter nodes to reach EKS API"
+
+##Karpenter nodes → cluster security group on 443.Karpenter runs as a pod
+##on your nodes and needs to talk to the EKS API to provision new  nodes.
+##This rile allows Karpenter specifically to reach the cluster's managed secruity group-seperate from the 
+##custom SG as EKS manages that one internally.
 }

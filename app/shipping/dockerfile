@@ -10,7 +10,8 @@ COPY src ./src
 
 RUN mvn package
 
-FROM eclipse-temurin:11-jre-alpine AS runtime
+FROM eclipse-temurin:11-jre-alpine AS runtime  
+#Compiles the application and packages it into a JAR file, output goes to /app/target/shipping-1.jar.
 
 EXPOSE 8080
 
@@ -20,5 +21,10 @@ ENV CART_ENDPOINT=cart:8080
 ENV DB_HOST=mysql
 
 COPY --from=build /app/target/shipping-1.0.jar shipping.jar
+##Copies only the compiled JAR from the build stage into the runtime stage.All the maven tooling, source cod
+##and dependencies stay behind in the build stage and never make it into the final image.
 
 CMD ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "shipping.jar"]
+
+##This runs the JAR file when the container starts. The -XX flag
+#ensures that the JVM only uses a maximum of 75% of the container's RAM
