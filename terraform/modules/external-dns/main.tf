@@ -209,3 +209,5 @@ resource "aws_cloudtrail" "route_53_access" {
 
   depends_on = [data.aws_s3_bucket.s3_bucket]
 }
+
+

@@ -192,7 +192,6 @@ resource "aws_subnet" "private" {
 }
 
 
-
 resource "aws_eip" "ngw_eip" {
   for_each = var.public_subnets
 
@@ -237,6 +236,10 @@ resource "aws_route_table" "private" {
 
   depends_on = [aws_nat_gateway.ngw]
 }
+# For each private subnet, it creates a route table that sends all outbound
+#traffic through the NAT gateway in the same AZ, keeping traffic AZ
+#local to avoid cross-AZ costs,it then associates each route table with it's subnet
+#so routing takes effect.
 
 resource "aws_route_table_association" "private" {
   for_each = var.private_subnets

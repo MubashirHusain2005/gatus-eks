@@ -58,7 +58,7 @@ resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
   role       = aws_iam_role.cluster.name
 }
-
+#AmazonEKSClusterPolicy is an AWS-managed IAM policy attached to the EKS cluster IAM role. It grants the EKS control plane permissions to interact with AWS infrastructure resources such as EC2, networking components, and security groups so that the Kubernetes control plane can manage and operate the cluster.
 
 #IAM role for nodes
 

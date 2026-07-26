@@ -33,3 +33,23 @@ variable "monitoring_namespace" {
   default     = "monitoring"
 }
 
+
+variable "kyverno_values" {
+  description = "Additional Helm values for the Kyverno chart."
+  type        = any
+  default = {
+    admissionController = {
+      replicas = 2
+    }
+    backgroundController = {
+      replicas = 2
+    }
+    cleanupController = {
+      replicas = 1
+    }
+    reportsController = {
+      replicas = 1
+    }
+  }
+}
+
